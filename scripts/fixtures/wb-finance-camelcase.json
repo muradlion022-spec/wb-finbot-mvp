@@ -1,0 +1,23 @@
+{
+  "reportId": "new-format-report-42",
+  "rrdId": "123456789",
+  "nmId": "100200300",
+  "vendorCode": "VV-NEW-42",
+  "title": "Кроссовки WB новый формат",
+  "techSize": "42",
+  "sku": "4601234567890",
+  "docTypeName": "Продажа",
+  "quantity": "2",
+  "retailAmount": "3499,50",
+  "ppvzSalesCommission": "524.93",
+  "forPay": "2110.75",
+  "deliveryService": "245.10",
+  "paidStorage": "14.25",
+  "paidAcceptance": "4.50",
+  "penalty": "9.75",
+  "deduction": "12.00",
+  "additionalPayment": "3.50",
+  "rrDate": "2026-07-10T12:00:00Z",
+  "saleDt": "2026-07-09T12:00:00Z",
+  "orderDt": "2026-07-08T12:00:00Z"
+}
