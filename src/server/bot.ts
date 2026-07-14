@@ -104,6 +104,7 @@ function renderSummary(summary: Awaited<ReturnType<typeof calculateReportSummary
     "",
     `Продажи: ${formatMoney(summary.revenue)}`,
     `К перечислению за товар: ${formatMoney(summary.goodsForPay)}`,
+    `Комиссия WB: ${formatMoney(summary.wbCommission)}`,
     `Расходы WB: ${formatMoney(summary.wbExpenses)}`,
     `Итого к оплате: ${formatMoney(summary.forPay)}`,
     `Себестоимость продаж: ${formatMoney(summary.productCost)}`,

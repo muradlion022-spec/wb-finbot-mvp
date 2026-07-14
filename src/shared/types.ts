@@ -61,6 +61,7 @@ export type OperatingExpenseInput = {
 export type MoneyBreakdown = {
   revenue: number;
   goodsForPay: number;
+  wbCommission: number;
   forPay: number;
   wbExpenses: number;
   productCost: number;

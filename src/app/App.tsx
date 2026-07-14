@@ -695,6 +695,7 @@ function Dashboard({ summary }: { summary: ReportSummary }) {
       <div className="metric-grid">
         <Metric label="Продажи" value={money(summary.revenue)} />
         <Metric label="К перечислению за товар" value={money(summary.goodsForPay)} />
+        <Metric label="Комиссия WB" value={money(summary.wbCommission)} tone="warning" />
         <Metric label="Расходы WB" value={money(summary.wbExpenses)} tone="warning" />
         <Metric label="Итого к оплате" value={money(summary.forPay)} />
         <Metric label="Себестоимость продаж" value={money(summary.productCost)} />
@@ -1140,6 +1141,7 @@ function ProductDetail({
         <div className="metric-grid">
           <Metric label="Продажи" value={money(product.revenue)} />
           <Metric label="К перечислению за товар" value={money(product.goodsForPay)} />
+          <Metric label="Комиссия WB" value={money(product.wbCommission)} tone="warning" />
           <Metric label="Итого к оплате" value={money(product.forPay)} />
           <Metric label="Себестоимость" value={money(product.productCost)} />
           <Metric label="Расходы WB" value={money(product.wbExpenses)} tone="warning" />

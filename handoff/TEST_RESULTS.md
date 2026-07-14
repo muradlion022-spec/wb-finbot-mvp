@@ -1,5 +1,48 @@
 # Test Results — 2026-07-14
 
+## Production verification — 2026-07-14
+
+Existing Vercel project `wb-finbot-mvp` was updated without creating a second project,
+database or bot. Deployment `dpl_H83pngTKr1ZjXD6yTXVW3Y8H8J9p` is `READY`, and the
+existing alias `https://wb-finbot-mvp.vercel.app` reports version `5f166b9a650d`.
+
+| Check | Actual result |
+| --- | --- |
+| `GET /api/health` | HTTP 200, `ok=true`, version `5f166b9a650d` |
+| `GET /api/account` without initData | HTTP 401, Telegram authorization required |
+| `OPTIONS /api/account` | HTTP 204; allows `Content-Type,X-Telegram-Init-Data,X-WB-Finbot-Session,X-Request-Id` |
+| Production JS asset | No `localhost`, `127.0.0.1` or `Failed to fetch` |
+| Database migration | Existing Neon PostgreSQL connected; four migrations found; none pending |
+| Telegram webhook | Current production URL; zero pending updates; no last error |
+| Signed Telegram initData | Existing `telegram-<telegramUserId>` account, token status `valid` |
+| Report list | 26 reports for the authenticated account |
+| Report `772198476` | HTTP 200, `ready`, 13,554 imported rows, 28 products |
+| Report `777875626` | HTTP 200, `ready`, 12 products; repeat open used saved state |
+
+Production summary for report `772198476`:
+
+| Metric | Actual production value |
+| --- | ---: |
+| Sales | 950,646.72 RUB |
+| Goods payout | 832,550.66 RUB |
+| WB commission | 118,096.06 RUB |
+| WB service expenses | 293,337.02 RUB |
+| Final WB payment | 539,213.64 RUB |
+| Product cost | 0 RUB |
+| Operating expenses | 0 RUB |
+| Tax | 0 RUB |
+| Net profit | 539,213.64 RUB |
+| Margin | 56.7% |
+| ROI | unavailable because product cost is 0 |
+
+The zero tax/COGS values match persisted settings: `taxMode=none` and all 28 report
+products currently have no cost. No token, initData or Telegram user ID was printed.
+
+GitHub publication is the remaining infrastructure limitation. GitHub `main` is still
+at `bc99e9a2389ca2543e1d2ef42e27c8fde0808900`: connector write returned `403 Resource
+not accessible by integration`, local HTTPS Git has no credentials, and `gh` is not
+installed. No force push or repository history rewrite was attempted.
+
 ## Finance reconciliation update — 2026-07-14
 
 The real WB workbook `Еженедельный детализированный отчет №772198476_275536 - 1.xlsx`
@@ -10,15 +53,19 @@ smoke fixture reproduce the official WB totals for report `772198476`:
 | --- | ---: |
 | Sales after returns | 950,646.72 RUB |
 | Goods payout after returns | 832,550.66 RUB |
+| WB commission / sales-to-goods-payout difference | 118,096.06 RUB |
 | Logistics | 263,373.05 RUB |
 | Storage | 4,663.97 RUB |
 | Other deductions | 25,220.00 RUB |
 | Fines | 80.00 RUB |
+| WB service expenses total | 293,337.02 RUB |
 | Final WB payment | 539,213.64 RUB |
 
 The fixture also verifies COGS, operating expenses, configurable tax, profit before tax,
 net profit, margin and ROI. Return rows are negative, non-sale WB expense rows do not add
 sold units, and account-level rows with `nmId=0` remain in report totals.
+The production account accepted all 13,554 workbook rows through the authenticated
+`POST /api/reports/import` endpoint; no WB token or Telegram initData was printed.
 
 Commands re-run successfully on 2026-07-14:
 
@@ -375,7 +422,7 @@ account isolation, Zod 400 and safe unknown error: verified
 
 This one isolated stub run covers: Finance-only token storage, optional Content failure, `GET /api/reports` cache hit, saved data on `429`, one detailed page only for a 100,000-row response, two-account isolation, Zod `400`, and safe `500` output.
 
-### Production read-only evidence before the code changes are deployed
+### Historical production evidence before the corrected deployment
 
 ```text
 GET https://wb-finbot-mvp.vercel.app/api/health -> HTTP 200
@@ -393,4 +440,6 @@ Production asset contained: http://localhost:3000
 Vercel logs command for the last 24 hours -> No logs found for muradlion022-7664s-projects/wb-finbot-mvp
 ```
 
-The production bundle observation is the factual cause of the reproduced Mini App `Failed to fetch`. The live production checks have not been repeated after a deploy because this task did not perform a deploy or receive a real Telegram WebApp `initData` session.
+The old bundle observation was the factual cause of the reproduced Mini App
+`Failed to fetch`. It is retained here as incident evidence. The corrected deployment
+and authenticated checks are recorded in `Production verification — 2026-07-14` above.

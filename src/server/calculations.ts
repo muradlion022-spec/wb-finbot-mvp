@@ -134,8 +134,9 @@ function financialsOfLine(line: FinancialLine) {
   return {
     revenue,
     goodsForPay,
+    wbCommission: revenue - goodsForPay,
     payout,
-    wbExpenses: revenue - payout
+    wbExpenses: serviceExpenses
   };
 }
 
@@ -302,6 +303,7 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
     const financials = lines.map(financialsOfLine);
     const revenue = financials.reduce((sum, line) => sum + line.revenue, 0);
     const goodsForPay = financials.reduce((sum, line) => sum + line.goodsForPay, 0);
+    const wbCommission = financials.reduce((sum, line) => sum + line.wbCommission, 0);
     const payout = financials.reduce((sum, line) => sum + line.payout, 0);
     const wbExpenses = financials.reduce((sum, line) => sum + line.wbExpenses, 0);
     const totalUnitCost = product?.costs[0]?.totalUnitCost ?? null;
@@ -320,6 +322,7 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
       returns,
       revenue,
       goodsForPay,
+      wbCommission,
       payout,
       wbExpenses,
       totalUnitCost,
@@ -350,8 +353,9 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
   const reportFinancials = report.lines.map(financialsOfLine);
   const totalRevenue = reportFinancials.reduce((sum, line) => sum + line.revenue, 0);
   const totalGoodsForPay = reportFinancials.reduce((sum, line) => sum + line.goodsForPay, 0);
+  const totalWbCommission = reportFinancials.reduce((sum, line) => sum + line.wbCommission, 0);
   const totalForPay = reportFinancials.reduce((sum, line) => sum + line.payout, 0);
-  const totalWbExpenses = totalRevenue - totalForPay;
+  const totalWbExpenses = reportFinancials.reduce((sum, line) => sum + line.wbExpenses, 0);
   const totalProductCost = preTaxProducts.reduce((sum, item) => sum + item.productCost, 0);
   const totalOperatingExpenses = storeLevelOperatingExpenses + byRevenueShareExpenses;
   const profitBeforeOperatingExpenses = totalForPay - totalProductCost;
@@ -380,6 +384,7 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
       returns: item.returns,
       revenue: roundMoney(item.revenue),
       goodsForPay: roundMoney(item.goodsForPay),
+      wbCommission: roundMoney(item.wbCommission),
       forPay: roundMoney(item.payout),
       wbExpenses: roundMoney(item.wbExpenses),
       productCost: roundMoney(item.productCost),
@@ -405,6 +410,7 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
     taxMode,
     revenue: roundMoney(totalRevenue),
     goodsForPay: roundMoney(totalGoodsForPay),
+    wbCommission: roundMoney(totalWbCommission),
     forPay: roundMoney(totalForPay),
     wbExpenses: roundMoney(totalWbExpenses),
     productCost: roundMoney(totalProductCost),

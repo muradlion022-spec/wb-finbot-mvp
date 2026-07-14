@@ -175,8 +175,9 @@ try {
   const wbReferenceSummary = await calculateReportSummary(wbReferenceReport.id, account.id);
   assert.equal(wbReferenceSummary.revenue, 950646.72);
   assert.equal(wbReferenceSummary.goodsForPay, 832550.66);
+  assert.equal(wbReferenceSummary.wbCommission, 118096.06);
   assert.equal(wbReferenceSummary.forPay, 539213.64);
-  assert.equal(wbReferenceSummary.wbExpenses, 411433.08);
+  assert.equal(wbReferenceSummary.wbExpenses, 293337.02);
   assert.equal(wbReferenceSummary.products[0]?.unitsSold, 1225);
   assert.equal(wbReferenceSummary.products[0]?.returns, 67);
   assert.equal(wbReferenceSummary.deductions.find((item) => item.type === "Хранение")?.amount, 4663.97);
