@@ -10,7 +10,13 @@ import {
   secondsUntil,
   WB_SYNC_COOLDOWN_MS
 } from "./sync.js";
-import { WbApiError, WbClient, type WbReportDetailsPage, type WbReportListItem } from "./wbClient.js";
+import {
+  WbApiError,
+  WbClient,
+  type WbReportDetailsPage,
+  type WbReportListItem,
+  type WbReportTotals
+} from "./wbClient.js";
 
 export class ReportNotFoundError extends Error {
   constructor() {
@@ -53,7 +59,21 @@ type ReportMeta = {
   rowsCount?: number;
   detailsStrategy?: "by_id" | "by_period";
   reportTooLarge?: boolean;
+  summaryTotals?: WbReportTotals;
 };
+
+function databaseTotals(totals: WbReportTotals) {
+  return {
+    totalRetailAmount: totals.retailAmountSum,
+    totalForPay: totals.forPaySum,
+    totalDeliveryService: totals.deliveryServiceSum,
+    totalStorage: totals.paidStorageSum,
+    totalAcceptance: totals.paidAcceptanceSum,
+    totalPenalty: totals.penaltySum,
+    totalDeduction: totals.deductionSum,
+    totalBankPayment: totals.bankPaymentSum
+  };
+}
 
 function parseDateOrDefault(value: string | undefined, fallback: Date) {
   if (!value) return fallback;
@@ -131,7 +151,8 @@ function reportMeta(report: WbReportListItem, detailsStrategy: "by_id" | "by_per
     dateTo: report.dateTo,
     rowsCount: report.rowsCount,
     detailsStrategy,
-    ...extra
+    ...extra,
+    summaryTotals: report.totals ?? extra.summaryTotals
   } satisfies ReportMeta;
 }
 
@@ -171,7 +192,9 @@ export async function importReport(
   const dateFrom = parseDateOrDefault(payload.dateFrom, inferredPeriod.dateFrom);
   const dateTo = parseDateOrDefault(payload.dateTo, inferredPeriod.dateTo);
   const reportId = payload.reportId || `local-${dateFrom.toISOString().slice(0, 10)}-${dateTo.toISOString().slice(0, 10)}`;
-  const totals = makeReportTotals(lines);
+  const totals = options.meta?.summaryTotals
+    ? databaseTotals(options.meta.summaryTotals)
+    : makeReportTotals(lines);
   const source = options.source ?? payload.source ?? "local_import";
   const metadata: ReportMeta = options.meta ?? { source, loaded: true };
   const productLines = new Map<number, NormalizedReportLineInput>();
@@ -362,13 +385,15 @@ export async function syncWbReportList(accountId: string): Promise<ReportSyncInf
             dateFrom: new Date(report.dateFrom),
             dateTo: new Date(report.dateTo),
             createdAtWb: report.createdAtWb ? new Date(report.createdAtWb) : null,
-            rawJson: JSON.stringify(metadata)
+            rawJson: JSON.stringify(metadata),
+            ...(report.totals ? databaseTotals(report.totals) : {})
           },
           update: {
             dateFrom: new Date(report.dateFrom),
             dateTo: new Date(report.dateTo),
             createdAtWb: report.createdAtWb ? new Date(report.createdAtWb) : undefined,
-            rawJson: JSON.stringify(metadata)
+            rawJson: JSON.stringify(metadata),
+            ...(report.totals ? databaseTotals(report.totals) : {})
           }
         });
       }

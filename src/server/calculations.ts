@@ -6,6 +6,7 @@ import type {
 } from "../shared/types.js";
 import { prisma } from "./db.js";
 import { saleQuantityFromReportRow } from "./normalizer.js";
+import type { WbReportTotals } from "./wbClient.js";
 
 type Expense = {
   id: string;
@@ -128,6 +129,31 @@ function correctedSaleQuantity(line: QuantityLine) {
   }
 
   return saleQuantityFromReportRow({}, line.operationType, line.quantity);
+}
+
+function storedReportTotals(rawJson: string): WbReportTotals | null {
+  try {
+    const parsed = JSON.parse(rawJson) as { summaryTotals?: Partial<WbReportTotals> };
+    const totals = parsed?.summaryTotals;
+    if (!totals || typeof totals !== "object") return null;
+    const number = (value: unknown) => {
+      const parsedNumber = Number(value);
+      return Number.isFinite(parsedNumber) ? parsedNumber : 0;
+    };
+    return {
+      retailAmountSum: number(totals.retailAmountSum),
+      forPaySum: number(totals.forPaySum),
+      deliveryServiceSum: number(totals.deliveryServiceSum),
+      paidStorageSum: number(totals.paidStorageSum),
+      paidAcceptanceSum: number(totals.paidAcceptanceSum),
+      deductionSum: number(totals.deductionSum),
+      penaltySum: number(totals.penaltySum),
+      additionalPaymentSum: number(totals.additionalPaymentSum),
+      bankPaymentSum: number(totals.bankPaymentSum)
+    };
+  } catch {
+    return null;
+  }
 }
 
 function isReturnOperation(operationType: string | null) {
@@ -379,11 +405,29 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
     };
   });
 
+  const reportFinancials = report.lines.map(financialsOfLine);
+  const listTotals = storedReportTotals(report.rawJson);
+  const lineRevenue = reportFinancials.reduce((sum, line) => sum + line.revenue, 0);
+  const lineGoodsForPay = reportFinancials.reduce((sum, line) => sum + line.goodsForPay, 0);
+  const lineLogistics = reportFinancials.reduce((sum, line) => sum + line.logistics, 0);
+  const lineStorage = reportFinancials.reduce((sum, line) => sum + line.storage, 0);
+  const lineOtherDeductions = reportFinancials.reduce((sum, line) => sum + line.otherDeductions, 0);
+  const linePenalties = reportFinancials.reduce((sum, line) => sum + line.penalties, 0);
+
+  const totalRevenue = listTotals?.retailAmountSum ?? lineRevenue;
+  const totalGoodsForPay = listTotals?.forPaySum ?? lineGoodsForPay;
+  const totalLogistics = listTotals?.deliveryServiceSum ?? lineLogistics;
+  const totalStorage = listTotals?.paidStorageSum ?? lineStorage;
+  const totalOtherDeductions = listTotals
+    ? listTotals.paidAcceptanceSum + listTotals.deductionSum - listTotals.additionalPaymentSum
+    : lineOtherDeductions;
+  const totalPenalties = listTotals?.penaltySum ?? linePenalties;
+  const totalWbCommission = totalRevenue - totalGoodsForPay;
+  const totalWbExpenses = totalLogistics + totalStorage + totalOtherDeductions + totalPenalties;
+  const totalForPay = listTotals?.bankPaymentSum ?? totalGoodsForPay - totalWbExpenses;
+
   const allocationBase = preProducts.reduce((sum, item) => sum + Math.max(0, item.revenue || item.payout), 0);
-  const accountLevelWbExpenses = report.lines
-    .filter((line) => line.nmId <= 0)
-    .reduce((sum, line) => sum + financialsOfLine(line).wbExpenses, 0);
-  const accountLevelBreakdown = report.lines
+  const sharedLineBreakdown = report.lines
     .filter((line) => line.nmId <= 0)
     .map(financialsOfLine)
     .reduce(
@@ -395,6 +439,17 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
       }),
       { logistics: 0, storage: 0, otherDeductions: 0, penalties: 0 }
     );
+  const accountLevelBreakdown = {
+    logistics: sharedLineBreakdown.logistics + (totalLogistics - lineLogistics),
+    storage: sharedLineBreakdown.storage + (totalStorage - lineStorage),
+    otherDeductions: sharedLineBreakdown.otherDeductions + (totalOtherDeductions - lineOtherDeductions),
+    penalties: sharedLineBreakdown.penalties + (totalPenalties - linePenalties)
+  };
+  const accountLevelWbExpenses =
+    accountLevelBreakdown.logistics +
+    accountLevelBreakdown.storage +
+    accountLevelBreakdown.otherDeductions +
+    accountLevelBreakdown.penalties;
 
   const preTaxProducts = preProducts.map((item) => {
     const shareBase = Math.max(0, item.revenue || item.payout);
@@ -425,16 +480,6 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
     };
   });
 
-  const reportFinancials = report.lines.map(financialsOfLine);
-  const totalRevenue = reportFinancials.reduce((sum, line) => sum + line.revenue, 0);
-  const totalGoodsForPay = reportFinancials.reduce((sum, line) => sum + line.goodsForPay, 0);
-  const totalWbCommission = reportFinancials.reduce((sum, line) => sum + line.wbCommission, 0);
-  const totalForPay = reportFinancials.reduce((sum, line) => sum + line.payout, 0);
-  const totalWbExpenses = reportFinancials.reduce((sum, line) => sum + line.wbExpenses, 0);
-  const totalLogistics = reportFinancials.reduce((sum, line) => sum + line.logistics, 0);
-  const totalStorage = reportFinancials.reduce((sum, line) => sum + line.storage, 0);
-  const totalOtherDeductions = reportFinancials.reduce((sum, line) => sum + line.otherDeductions, 0);
-  const totalPenalties = reportFinancials.reduce((sum, line) => sum + line.penalties, 0);
   const totalProductCost = preTaxProducts.reduce((sum, item) => sum + item.productCost, 0);
   const totalOperatingExpenses = storeLevelOperatingExpenses + byRevenueShareExpenses;
   const profitBeforeOperatingExpenses = totalForPay - totalProductCost;

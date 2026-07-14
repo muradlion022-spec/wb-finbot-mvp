@@ -41,7 +41,21 @@ const finance = await listen((req, res) => {
   if (req.url === "/api/finance/v1/sales-reports/list") {
     financeListCalls += 1;
     if (listStatus !== 200) return send(listStatus, { message: "rate limited" });
-    return send(200, [{ reportId: "stub-report", dateFrom: "2026-07-01", dateTo: "2026-07-07", rowsCount: 1 }]);
+    return send(200, [{
+      reportId: "stub-report",
+      dateFrom: "2026-07-01",
+      dateTo: "2026-07-07",
+      rowsCount: 1,
+      retailAmountSum: "100",
+      forPaySum: "70",
+      deliveryServiceSum: "0",
+      paidStorageSum: "5",
+      paidAcceptanceSum: "0",
+      deductionSum: "2",
+      penaltySum: "1",
+      additionalPaymentSum: "0",
+      bankPaymentSum: "62"
+    }]);
   }
   if (req.url?.startsWith("/api/finance/v1/sales-reports/detailed/")) {
     financeDetailedCalls += 1;
@@ -148,11 +162,14 @@ try {
 
   const loaded = await ensureReportLoaded(firstList.reports[0].id, { accountId: account.id });
   const summary = await calculateReportSummary(loaded.report.id, account.id);
-  assert.equal(summary.forPay, 70);
+  assert.equal(summary.forPay, 62);
+  assert.equal(summary.storage, 5);
+  assert.equal(summary.otherDeductions, 2);
+  assert.equal(summary.penalties, 1);
   assert.equal(financeDetailedCalls, 1);
   const enrichment = await enrichReportProducts(loaded.report.id, account.id);
   assert.equal(enrichment.status, "failed_optional");
-  assert.equal((await calculateReportSummary(loaded.report.id, account.id)).forPay, 70);
+  assert.equal((await calculateReportSummary(loaded.report.id, account.id)).forPay, 62);
   assert.equal(contentCardCalls, 1);
   console.log("content failure: finance summary remains available with vendorCode and nmId");
 

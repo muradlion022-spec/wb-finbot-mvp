@@ -3,12 +3,25 @@ import { request as httpsRequest } from "node:https";
 import { decryptSecret } from "./crypto.js";
 import { config } from "./config.js";
 
+export type WbReportTotals = {
+  retailAmountSum: number;
+  forPaySum: number;
+  deliveryServiceSum: number;
+  paidStorageSum: number;
+  paidAcceptanceSum: number;
+  deductionSum: number;
+  penaltySum: number;
+  additionalPaymentSum: number;
+  bankPaymentSum: number;
+};
+
 export type WbReportListItem = {
   reportId: string;
   dateFrom: string;
   dateTo: string;
   createdAtWb?: string;
   rowsCount: number;
+  totals?: WbReportTotals;
 };
 
 export type WbReportDetailsPage = {
@@ -98,6 +111,40 @@ function getString(row: Record<string, unknown>, keys: string[]) {
     }
   }
   return null;
+}
+
+function getNumber(row: Record<string, unknown>, keys: string[]) {
+  const value = getString(row, keys);
+  if (value === null) return 0;
+  const parsed = Number(value.replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function reportTotalsFromListRow(row: Record<string, unknown>): WbReportTotals | undefined {
+  const totalKeys = [
+    "retailAmountSum",
+    "forPaySum",
+    "deliveryServiceSum",
+    "paidStorageSum",
+    "paidAcceptanceSum",
+    "deductionSum",
+    "penaltySum",
+    "additionalPaymentSum",
+    "bankPaymentSum"
+  ];
+  if (!totalKeys.some((key) => row[key] !== undefined && row[key] !== null)) return undefined;
+
+  return {
+    retailAmountSum: getNumber(row, ["retailAmountSum"]),
+    forPaySum: getNumber(row, ["forPaySum"]),
+    deliveryServiceSum: getNumber(row, ["deliveryServiceSum"]),
+    paidStorageSum: getNumber(row, ["paidStorageSum"]),
+    paidAcceptanceSum: getNumber(row, ["paidAcceptanceSum"]),
+    deductionSum: getNumber(row, ["deductionSum"]),
+    penaltySum: getNumber(row, ["penaltySum"]),
+    additionalPaymentSum: getNumber(row, ["additionalPaymentSum"]),
+    bankPaymentSum: getNumber(row, ["bankPaymentSum"])
+  };
 }
 
 function getReportId(row: Record<string, unknown>) {
@@ -241,7 +288,8 @@ function groupReports(rows: Record<string, unknown>[], dateFrom: string, dateTo:
       dateFrom: getString(row, ["dateFrom", "date_from"]) || dateFrom,
       dateTo: getString(row, ["dateTo", "date_to"]) || dateTo,
       createdAtWb: getString(row, ["createDate", "createdAtWb", "create_dt"]) || undefined,
-      rowsCount: 0
+      rowsCount: 0,
+      totals: reportTotalsFromListRow(row)
     };
     group.rowsCount += 1;
     groups.set(reportId, group);
