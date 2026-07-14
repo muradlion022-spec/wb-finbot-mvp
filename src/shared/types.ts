@@ -4,9 +4,8 @@ export type RecurrenceType = "none" | "monthly" | "weekly" | "yearly";
 export type TaxMode =
   | "none"
   | "usn_income_1"
-  | "usn_income_5"
   | "usn_income_6"
-  | "usn_profit_6"
+  | "usn_profit_5"
   | "usn_profit_15";
 
 export type NormalizedReportLineInput = {
@@ -64,6 +63,10 @@ export type MoneyBreakdown = {
   wbCommission: number;
   forPay: number;
   wbExpenses: number;
+  logistics: number;
+  storage: number;
+  otherDeductions: number;
+  penalties: number;
   productCost: number;
   operatingExpenses: number;
   tax: number;
@@ -85,6 +88,7 @@ export type ProductReportItem = MoneyBreakdown & {
   unitsSold: number;
   returns: number;
   totalUnitCost: number | null;
+  costBreakdown: ProductCostInput | null;
   missingCost: boolean;
   status: "profitable" | "weak_margin" | "loss" | "missing_cost";
   linesCount: number;

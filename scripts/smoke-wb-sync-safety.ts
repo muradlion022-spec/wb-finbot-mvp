@@ -56,19 +56,20 @@ const finance = await listen((req, res) => {
           rrdId: String(index + 1),
           nmId: "100200300",
           vendorCode: "LARGE-ROW",
+          sellerOperName: "Продажа",
           quantity: "1",
           retailAmount: "10",
           forPay: "7"
         }))
       );
     }
-    return send(200, [{ reportId: "stub-report", rrdId: "1", nmId: "100200300", vendorCode: "STUB-42", quantity: "1", retailAmount: "100", forPay: "70" }]);
+    return send(200, [{ reportId: "stub-report", rrdId: "1", nmId: "100200300", vendorCode: "STUB-42", sellerOperName: "Продажа", quantity: "1", retailAmount: "100", forPay: "70" }]);
   }
   if (req.url === "/api/finance/v1/sales-reports/detailed") {
     financeDetailedCalls += 1;
     return send(200, [
-      { reportId: "stub-report", rrdId: "1", nmId: "100200300", vendorCode: "STUB-42", quantity: "1", retailAmount: "100", forPay: "70" },
-      { reportId: "another-report", rrdId: "2", nmId: "100200301", vendorCode: "OTHER-42", quantity: "1", retailAmount: "200", forPay: "140" }
+      { reportId: "stub-report", rrdId: "1", nmId: "100200300", vendorCode: "STUB-42", sellerOperName: "Продажа", quantity: "1", retailAmount: "100", forPay: "70" },
+      { reportId: "another-report", rrdId: "2", nmId: "100200301", vendorCode: "OTHER-42", sellerOperName: "Продажа", quantity: "1", retailAmount: "200", forPay: "140" }
     ]);
   }
   send(404, { message: "not found" });
@@ -164,6 +165,7 @@ try {
       lines: [
         { nmId: 439778726, vendorCode: "REFERENCE-42", docTypeName: "Продажа", quantity: 1225, retailAmount: 1009077.63, forPay: 882097.82 },
         { nmId: 439778726, vendorCode: "REFERENCE-42", docTypeName: "Возврат", quantity: 67, retailAmount: 58430.91, forPay: 49547.16 },
+        { nmId: 439778726, vendorCode: "REFERENCE-42", sellerOperName: "Возмещение издержек по перевозке/по складским операциям с товаром", quantity: 17620 },
         { nmId: 439778726, vendorCode: "REFERENCE-42", sellerOperName: "Логистика", deliveryService: 263373.05 },
         { nmId: 0, sellerOperName: "Хранение", paidStorage: 4663.97 },
         { nmId: 0, sellerOperName: "Удержание", deduction: 25220 },
@@ -181,12 +183,23 @@ try {
   assert.equal(wbReferenceSummary.products[0]?.unitsSold, 1225);
   assert.equal(wbReferenceSummary.products[0]?.returns, 67);
   assert.equal(wbReferenceSummary.deductions.find((item) => item.type === "Хранение")?.amount, 4663.97);
-  assert.equal(wbReferenceSummary.deductions.find((item) => item.type === "Удержания")?.amount, 25220);
+  assert.equal(wbReferenceSummary.deductions.find((item) => item.type === "Прочие удержания")?.amount, 25220);
+  assert.equal(wbReferenceSummary.logistics, 263373.05);
+  assert.equal(wbReferenceSummary.storage, 4663.97);
+  assert.equal(wbReferenceSummary.otherDeductions, 25220);
+  assert.equal(wbReferenceSummary.penalties, 80);
 
   const referenceProduct = wbReferenceSummary.products[0];
   assert.ok(referenceProduct);
   await prisma.productCost.create({
-    data: { productId: referenceProduct.productId, purchaseCost: 100, totalUnitCost: 100 }
+    data: {
+      productId: referenceProduct.productId,
+      purchaseCost: 100,
+      packagingCost: 500,
+      markingCost: 500,
+      otherUnitCost: 500,
+      totalUnitCost: 1600
+    }
   });
   await prisma.operatingExpense.create({
     data: {
@@ -209,6 +222,12 @@ try {
   assert.equal(taxedReferenceSummary.finalProfit, 365374.84);
   assert.equal(taxedReferenceSummary.margin, 38.4);
   assert.equal(taxedReferenceSummary.roi, 315.5);
+  await prisma.wbAccount.update({ where: { id: account.id }, data: { taxMode: "usn_profit_5" } });
+  const profitTaxReferenceSummary = await calculateReportSummary(wbReferenceReport.id, account.id);
+  assert.equal(profitTaxReferenceSummary.tax, 21120.68);
+  assert.equal(profitTaxReferenceSummary.finalProfit, 401292.96);
+  assert.equal(profitTaxReferenceSummary.margin, 42.2);
+  assert.equal(profitTaxReferenceSummary.roi, 346.5);
   await prisma.wbAccount.update({ where: { id: account.id }, data: { taxMode: "none" } });
   console.log("WB report 772198476: sales, payout, costs, tax, margin and ROI reconciled");
 

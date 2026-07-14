@@ -60,13 +60,30 @@ const expenseCategories = [
 ];
 
 const taxModeOptions: Array<[TaxMode, string]> = [
-  ["none", "Не учитывать"],
+  ["none", "Выберите налоговый режим"],
   ["usn_income_6", "УСН Доходы — 6%"],
-  ["usn_income_5", "УСН Доходы — 5% (региональная)"],
-  ["usn_income_1", "УСН Доходы — 1% (региональная)"],
+  ["usn_income_1", "УСН Доходы — 1%"],
   ["usn_profit_15", "УСН Доходы минус расходы — 15%"],
-  ["usn_profit_6", "УСН Доходы минус расходы — 6% (региональная)"]
+  ["usn_profit_5", "УСН Доходы минус расходы — 5%"]
 ];
+
+function taxMetricLabel(mode: TaxMode) {
+  const labels: Record<TaxMode, string> = {
+    none: "Налог не выбран",
+    usn_income_1: "Налог · УСН 1% с доходов",
+    usn_income_6: "Налог · УСН 6% с доходов",
+    usn_profit_5: "Налог · УСН 5% с прибыли",
+    usn_profit_15: "Налог · УСН 15% с прибыли"
+  };
+  return labels[mode];
+}
+
+function costDraftFor(product: ProductReportItem): ProductCostInput {
+  return product.costBreakdown ?? {
+    ...emptyCost,
+    purchaseCost: product.totalUnitCost ?? 0
+  };
+}
 
 function money(value: number) {
   return `${Math.round(value).toLocaleString("ru-RU")} ₽`;
@@ -185,7 +202,7 @@ export function App() {
   const searchParams = new URLSearchParams(window.location.search);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "dashboard");
-  const [account, setAccount] = useState<{ name: string; tokenStatus: string; taxMode: TaxMode; useDemoData: boolean; version: string } | null>(
+  const [account, setAccount] = useState<{ name: string; tokenStatus: string; taxMode: TaxMode; useDemoData: boolean } | null>(
     null
   );
   const [reports, setReports] = useState<
@@ -217,7 +234,6 @@ export function App() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
-  const [buildInfo, setBuildInfo] = useState({ version: import.meta.env.VITE_APP_VERSION || "local", builtAt: import.meta.env.VITE_APP_BUILT_AT || "" });
 
   const visibleProducts = useMemo(() => {
     if (!summary) {
@@ -267,8 +283,7 @@ export function App() {
     setLoading(true);
     setError("");
     try {
-      const healthPayload = await api.health();
-      setBuildInfo({ version: healthPayload.version, builtAt: healthPayload.builtAt });
+      await api.health();
       const accountPayload = await api.account();
       const reportsPayload = await api.reports();
       setAccount(accountPayload);
@@ -375,11 +390,7 @@ export function App() {
   function updateCostDraft(product: ProductReportItem, key: keyof ProductCostInput, value: number) {
     setCostDrafts((drafts) => {
       const current =
-        drafts[product.productId] ??
-        ({
-          ...emptyCost,
-          purchaseCost: product.totalUnitCost ?? 0
-        } satisfies ProductCostInput);
+        drafts[product.productId] ?? costDraftFor(product);
 
       return {
         ...drafts,
@@ -392,15 +403,17 @@ export function App() {
   }
 
   async function saveCost(product: ProductReportItem) {
-    const draft = costDrafts[product.productId] ?? {
-      ...emptyCost,
-      purchaseCost: product.totalUnitCost ?? 0
-    };
+    const draft = costDrafts[product.productId] ?? costDraftFor(product);
 
     setBusy(true);
     setError("");
     try {
-      await api.saveCost(product.productId, draft);
+      await api.saveCost(product.productId, {
+        ...draft,
+        packagingCost: 0,
+        markingCost: 0,
+        otherUnitCost: 0
+      });
       await refreshReport();
       setNotice("Себестоимость сохранена.");
     } catch (caught) {
@@ -657,7 +670,6 @@ export function App() {
             <SettingsView
               tokenStatus={account?.tokenStatus || "not_connected"}
               taxMode={account?.taxMode || "none"}
-              version={buildInfo.version || account?.version || "local"}
               tokenDraft={tokenDraft}
               onTokenDraftChange={setTokenDraft}
               onSaveToken={() => void saveToken()}
@@ -671,6 +683,7 @@ export function App() {
       {selectedProduct && (
         <ProductDetail
           product={selectedProduct}
+          taxMode={summary?.taxMode ?? "none"}
           detail={productDetail}
           onClose={() => setSelectedProduct(null)}
         />
@@ -696,25 +709,18 @@ function Dashboard({ summary }: { summary: ReportSummary }) {
         <Metric label="Продажи" value={money(summary.revenue)} />
         <Metric label="К перечислению за товар" value={money(summary.goodsForPay)} />
         <Metric label="Комиссия WB" value={money(summary.wbCommission)} tone="warning" />
-        <Metric label="Расходы WB" value={money(summary.wbExpenses)} tone="warning" />
+        <Metric label="Логистика" value={money(summary.logistics)} tone="warning" />
+        <Metric label="Хранение" value={money(summary.storage)} tone="warning" />
+        <Metric label="Прочие удержания" value={money(summary.otherDeductions)} tone="warning" />
+        <Metric label="Штрафы" value={money(summary.penalties)} tone="warning" />
         <Metric label="Итого к оплате" value={money(summary.forPay)} />
         <Metric label="Себестоимость продаж" value={money(summary.productCost)} />
         <Metric label="Опер. расходы" value={money(summary.operatingExpenses)} tone="warning" />
-        <Metric label="Налог" value={money(summary.tax)} tone="warning" />
-        <Metric
-          label="Прибыль до налога"
-          value={money(summary.profitBeforeTax)}
-          tone={summary.profitBeforeTax >= 0 ? "positive" : "negative"}
-        />
+        <Metric label={taxMetricLabel(summary.taxMode)} value={money(summary.tax)} tone="warning" />
         <Metric
           label="Чистая прибыль"
           value={money(summary.finalProfit)}
           tone={summary.finalProfit >= 0 ? "positive" : "negative"}
-        />
-        <Metric
-          label="До опер. расходов"
-          value={money(summary.profitBeforeOperatingExpenses)}
-          tone={summary.profitBeforeOperatingExpenses >= 0 ? "positive" : "negative"}
         />
         <Metric label="Маржинальность" value={percent(summary.margin)} />
         <Metric label="ROI" value={percent(summary.roi)} />
@@ -777,7 +783,7 @@ function Products({
           <option value="loss_first">По убытку</option>
           <option value="revenue_desc">По продажам</option>
           <option value="margin_desc">По марже</option>
-          <option value="wb_expenses_desc">По расходам WB</option>
+          <option value="wb_expenses_desc">По удержаниям WB</option>
         </select>
       </div>
 
@@ -825,22 +831,16 @@ function Costs({
 }) {
   const fields: Array<[keyof ProductCostInput, string]> = [
     ["purchaseCost", "Закупка"],
-    ["packagingCost", "Упаковка"],
     ["fulfillmentCost", "Фулфилмент"],
-    ["deliveryToWarehouseCost", "Доставка до склада"],
-    ["markingCost", "Маркировка"],
-    ["otherUnitCost", "Прочее"]
+    ["deliveryToWarehouseCost", "Доставка до склада"]
   ];
 
   return (
     <section className="screen">
       <div className="cost-list">
         {products.map((product) => {
-          const draft = costDrafts[product.productId] ?? {
-            ...emptyCost,
-            purchaseCost: product.totalUnitCost ?? 0
-          };
-          const total = Object.values(draft).reduce((sum, value) => sum + Number(value || 0), 0);
+          const draft = costDrafts[product.productId] ?? costDraftFor(product);
+          const total = draft.purchaseCost + draft.fulfillmentCost + draft.deliveryToWarehouseCost;
 
           return (
             <article className="cost-item" key={product.productId || product.nmId}>
@@ -861,8 +861,10 @@ function Costs({
                       type="number"
                       min="0"
                       inputMode="decimal"
-                      value={draft[key]}
-                      onChange={(event) => onDraftChange(product, key, Number(event.target.value))}
+                      value={draft[key] || ""}
+                      placeholder="0"
+                      onFocus={(event) => event.currentTarget.select()}
+                      onChange={(event) => onDraftChange(product, key, Number(event.target.value || 0))}
                     />
                   </label>
                 ))}
@@ -1038,7 +1040,6 @@ function Deductions({ summary }: { summary: ReportSummary }) {
 function SettingsView({
   tokenStatus,
   taxMode,
-  version,
   tokenDraft,
   onTokenDraftChange,
   onSaveToken,
@@ -1047,7 +1048,6 @@ function SettingsView({
 }: {
   tokenStatus: string;
   taxMode: TaxMode;
-  version: string;
   tokenDraft: string;
   onTokenDraftChange: (value: string) => void;
   onSaveToken: () => void;
@@ -1089,21 +1089,13 @@ function SettingsView({
           <span>Налоговый режим</span>
           <select value={taxMode} onChange={(event) => onTaxModeChange(event.target.value as TaxMode)}>
             {taxModeOptions.map(([value, label]) => (
-              <option value={value} key={value}>
+              <option value={value} key={value} disabled={value === "none"}>
                 {label}
               </option>
             ))}
           </select>
         </label>
-        <p className="muted-text">Расчёт справочный. Для режимов «доходы минус расходы» учитывается минимальный налог 1% от продаж.</p>
-        <div className="settings-list">
-          <span>Часовой пояс</span>
-          <strong>Europe/Moscow</strong>
-          <span>Валюта</span>
-          <strong>RUB</strong>
-          <span>Версия</span>
-          <strong>{version}</strong>
-        </div>
+        <p className="muted-text">Расчёт справочный: налог с доходов считается от продаж, а «доходы минус расходы» — от расчётной прибыли отчёта.</p>
       </section>
     </section>
   );
@@ -1111,10 +1103,12 @@ function SettingsView({
 
 function ProductDetail({
   product,
+  taxMode,
   detail,
   onClose
 }: {
   product: ProductReportItem;
+  taxMode: TaxMode;
   detail: Awaited<ReturnType<typeof api.productDetail>> | null;
   onClose: () => void;
 }) {
@@ -1144,8 +1138,11 @@ function ProductDetail({
           <Metric label="Комиссия WB" value={money(product.wbCommission)} tone="warning" />
           <Metric label="Итого к оплате" value={money(product.forPay)} />
           <Metric label="Себестоимость" value={money(product.productCost)} />
-          <Metric label="Расходы WB" value={money(product.wbExpenses)} tone="warning" />
-          <Metric label="Налог" value={money(product.tax)} tone="warning" />
+          <Metric label="Логистика" value={money(product.logistics)} tone="warning" />
+          <Metric label="Хранение" value={money(product.storage)} tone="warning" />
+          <Metric label="Прочие удержания" value={money(product.otherDeductions)} tone="warning" />
+          <Metric label="Штрафы" value={money(product.penalties)} tone="warning" />
+          <Metric label={taxMetricLabel(taxMode)} value={money(product.tax)} tone="warning" />
           <Metric label="ROI" value={percent(product.roi)} />
           <Metric label="Опер. расходы" value={money(product.operatingExpenses)} tone="warning" />
           <Metric
@@ -1175,7 +1172,7 @@ function ProductDetail({
               </div>
             </details>
             <details>
-              <summary>Расходы WB</summary>
+              <summary>Удержания WB</summary>
               <div className="small-table">
                 <div>
                   <span>Комиссия</span>
@@ -1193,11 +1190,16 @@ function ProductDetail({
                   <span>{money(detail.lines.reduce((sum, line) => sum + line.storageFee, 0))}</span>
                 </div>
                 <div>
-                  <span>Штрафы и удержания</span>
+                  <span>Прочие удержания</span>
                   <span />
                   <span>
-                    {money(detail.lines.reduce((sum, line) => sum + line.penalty + line.deduction, 0))}
+                    {money(detail.lines.reduce((sum, line) => sum + line.acceptanceFee + line.deduction - line.additionalPayment, 0))}
                   </span>
+                </div>
+                <div>
+                  <span>Штрафы</span>
+                  <span />
+                  <span>{money(detail.lines.reduce((sum, line) => sum + line.penalty, 0))}</span>
                 </div>
               </div>
             </details>

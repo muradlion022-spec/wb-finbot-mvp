@@ -141,17 +141,10 @@ button:disabled {
 
 .tabs {
   display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(74px, 1fr);
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 6px;
-  overflow-x: auto;
   padding: 4px 0 10px;
   margin-bottom: 8px;
-  scrollbar-width: none;
-}
-
-.tabs::-webkit-scrollbar {
-  display: none;
 }
 
 .tab {
@@ -167,8 +160,11 @@ button:disabled {
 }
 
 .tab span {
+  width: 100%;
   font-size: 11px;
   line-height: 1.1;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .tab.active {
@@ -265,6 +261,7 @@ button:disabled {
 }
 
 .metric {
+  min-width: 0;
   min-height: 76px;
   border: 1px solid #dfe1da;
   border-radius: 8px;
@@ -278,6 +275,8 @@ button:disabled {
 .metric span {
   color: #667085;
   font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .metric strong {
@@ -537,12 +536,6 @@ select {
   color: #475467;
 }
 
-.settings-list {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-}
-
 .detail-sheet {
   position: fixed;
   inset: 0;
@@ -645,6 +638,10 @@ summary {
   .toolbar {
     display: grid;
     grid-template-columns: 1fr repeat(2, auto);
+  }
+
+  .tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .tool-button span {

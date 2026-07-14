@@ -68,12 +68,23 @@ assert.equal(returned.commission, -100);
 const logistics = normalizeReportLine({
   nmId: 100200300,
   vendorCode: "LOGISTICS-42",
+  docTypeName: "Продажа",
   sellerOperName: "Логистика",
-  quantity: 0,
+  quantity: 2,
   deliveryService: 245
 });
 assert.ok(logistics, "logistics row must normalize");
 assert.equal(logistics.quantity, 0);
+assert.equal(logistics.operationType, "Логистика");
+
+const transportReimbursement = normalizeReportLine({
+  nmId: 100200300,
+  vendorCode: "REIMBURSEMENT-42",
+  sellerOperName: "Возмещение издержек по перевозке/по складским операциям с товаром",
+  quantity: 17_620
+});
+assert.ok(transportReimbursement, "transport reimbursement row must normalize");
+assert.equal(transportReimbursement.quantity, 0);
 
 const sharedStorage = normalizeReportLine({
   nmId: 0,
@@ -85,4 +96,4 @@ assert.equal(sharedStorage.nmId, 0);
 assert.equal(sharedStorage.quantity, 0);
 assert.equal(sharedStorage.storageFee, 4663.97);
 
-console.log("normalizer: formats, return signs and account-level WB expenses verified");
+console.log("normalizer: sale quantities, return signs and WB expense rows verified");

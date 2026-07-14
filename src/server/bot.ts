@@ -19,6 +19,17 @@ function formatPercent(value: number | null) {
   return value === null ? "нет данных" : `${value.toLocaleString("ru-RU")} %`;
 }
 
+function taxLabel(mode: Awaited<ReturnType<typeof calculateReportSummary>>["taxMode"]) {
+  const labels = {
+    none: "Налог не выбран",
+    usn_income_1: "Налог · УСН 1% с доходов",
+    usn_income_6: "Налог · УСН 6% с доходов",
+    usn_profit_5: "Налог · УСН 5% с прибыли",
+    usn_profit_15: "Налог · УСН 15% с прибыли"
+  };
+  return labels[mode];
+}
+
 function mainKeyboard() {
   return new Keyboard()
     .text("Подключить WB API")
@@ -105,14 +116,15 @@ function renderSummary(summary: Awaited<ReturnType<typeof calculateReportSummary
     `Продажи: ${formatMoney(summary.revenue)}`,
     `К перечислению за товар: ${formatMoney(summary.goodsForPay)}`,
     `Комиссия WB: ${formatMoney(summary.wbCommission)}`,
-    `Расходы WB: ${formatMoney(summary.wbExpenses)}`,
+    `Логистика: ${formatMoney(summary.logistics)}`,
+    `Хранение: ${formatMoney(summary.storage)}`,
+    `Прочие удержания: ${formatMoney(summary.otherDeductions)}`,
+    `Штрафы: ${formatMoney(summary.penalties)}`,
     `Итого к оплате: ${formatMoney(summary.forPay)}`,
     `Себестоимость продаж: ${formatMoney(summary.productCost)}`,
     `Операционные расходы: ${formatMoney(summary.operatingExpenses)}`,
-    `Налог: ${formatMoney(summary.tax)}`,
+    `${taxLabel(summary.taxMode)}: ${formatMoney(summary.tax)}`,
     "",
-    `Прибыль до операционных расходов: ${formatMoney(summary.profitBeforeOperatingExpenses)}`,
-    `Прибыль до налога: ${formatMoney(summary.profitBeforeTax)}`,
     `Чистая прибыль: ${formatMoney(summary.finalProfit)}`,
     `Маржинальность: ${formatPercent(summary.margin)}`,
     `ROI: ${formatPercent(summary.roi)}`,

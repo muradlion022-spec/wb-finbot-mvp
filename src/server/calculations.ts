@@ -5,6 +5,7 @@ import type {
   TaxMode
 } from "../shared/types.js";
 import { prisma } from "./db.js";
+import { saleQuantityFromReportRow } from "./normalizer.js";
 
 type Expense = {
   id: string;
@@ -110,6 +111,25 @@ type FinancialLine = {
   additionalPayment: number;
 };
 
+type QuantityLine = {
+  rawJson: string;
+  operationType: string | null;
+  quantity: number;
+};
+
+function correctedSaleQuantity(line: QuantityLine) {
+  try {
+    const raw = JSON.parse(line.rawJson) as unknown;
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      return saleQuantityFromReportRow(raw as Record<string, unknown>, line.operationType, line.quantity);
+    }
+  } catch {
+    // Older imported rows can have malformed raw metadata; fall back to normalized fields.
+  }
+
+  return saleQuantityFromReportRow({}, line.operationType, line.quantity);
+}
+
 function isReturnOperation(operationType: string | null) {
   const normalized = operationType?.toLowerCase() ?? "";
   return normalized.includes("возврат") || normalized.includes("return");
@@ -122,13 +142,11 @@ function signedTransactionAmount(value: number, operationType: string | null) {
 function financialsOfLine(line: FinancialLine) {
   const revenue = signedTransactionAmount(line.retailAmount, line.operationType);
   const goodsForPay = signedTransactionAmount(line.forPay, line.operationType);
-  const serviceExpenses =
-    line.deliveryService +
-    line.storageFee +
-    line.acceptanceFee +
-    line.penalty +
-    line.deduction -
-    line.additionalPayment;
+  const logistics = line.deliveryService;
+  const storage = line.storageFee;
+  const otherDeductions = line.acceptanceFee + line.deduction - line.additionalPayment;
+  const penalties = line.penalty;
+  const serviceExpenses = logistics + storage + otherDeductions + penalties;
   const payout = goodsForPay - serviceExpenses;
 
   return {
@@ -136,31 +154,34 @@ function financialsOfLine(line: FinancialLine) {
     goodsForPay,
     wbCommission: revenue - goodsForPay,
     payout,
-    wbExpenses: serviceExpenses
+    wbExpenses: serviceExpenses,
+    logistics,
+    storage,
+    otherDeductions,
+    penalties
   };
 }
 
 const TAX_MODES = new Set<TaxMode>([
   "none",
   "usn_income_1",
-  "usn_income_5",
   "usn_income_6",
-  "usn_profit_6",
+  "usn_profit_5",
   "usn_profit_15"
 ]);
 
-function normalizeTaxMode(value: string): TaxMode {
+export function normalizeTaxMode(value: string): TaxMode {
+  if (value === "usn_profit_6") return "usn_profit_5";
   return TAX_MODES.has(value as TaxMode) ? (value as TaxMode) : "none";
 }
 
 function calculateTax(mode: TaxMode, revenue: number, profitBeforeTax: number) {
   const income = Math.max(0, revenue);
   if (mode === "usn_income_1") return income * 0.01;
-  if (mode === "usn_income_5") return income * 0.05;
   if (mode === "usn_income_6") return income * 0.06;
-  if (mode === "usn_profit_6" || mode === "usn_profit_15") {
-    const rate = mode === "usn_profit_6" ? 0.06 : 0.15;
-    return Math.max(Math.max(0, profitBeforeTax) * rate, income * 0.01);
+  if (mode === "usn_profit_5" || mode === "usn_profit_15") {
+    const rate = mode === "usn_profit_5" ? 0.05 : 0.15;
+    return Math.max(0, profitBeforeTax) * rate;
   }
   return 0;
 }
@@ -179,7 +200,10 @@ function buildInsights(summary: Omit<ReportSummary, "insights">) {
   );
 
   const expenseCandidates = [
-    ["расходы WB", summary.wbExpenses],
+    ["логистика", summary.logistics],
+    ["хранение", summary.storage],
+    ["прочие удержания", summary.otherDeductions],
+    ["штрафы", summary.penalties],
     ["себестоимость", summary.productCost],
     ["операционные расходы", summary.operatingExpenses],
     ["налог", summary.tax]
@@ -223,7 +247,7 @@ function buildDeductions(lines: Array<{
     ["Хранение", "storageFee"],
     ["Приемка", "acceptanceFee"],
     ["Штрафы", "penalty"],
-    ["Удержания", "deduction"]
+    ["Прочие удержания", "deduction"]
   ];
 
   for (const line of lines) {
@@ -298,15 +322,33 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
 
   const preProducts = [...productGroups.entries()].map(([nmId, lines]) => {
     const product = lines.find((line) => line.product)?.product ?? null;
-    const unitsSold = lines.reduce((sum, line) => sum + Math.max(0, line.quantity), 0);
-    const returns = Math.abs(lines.reduce((sum, line) => sum + Math.min(0, line.quantity), 0));
+    const quantities = lines.map((line) => correctedSaleQuantity(line));
+    const unitsSold = quantities.reduce((sum, quantity) => sum + Math.max(0, quantity), 0);
+    const returns = Math.abs(quantities.reduce((sum, quantity) => sum + Math.min(0, quantity), 0));
     const financials = lines.map(financialsOfLine);
     const revenue = financials.reduce((sum, line) => sum + line.revenue, 0);
     const goodsForPay = financials.reduce((sum, line) => sum + line.goodsForPay, 0);
     const wbCommission = financials.reduce((sum, line) => sum + line.wbCommission, 0);
     const payout = financials.reduce((sum, line) => sum + line.payout, 0);
     const wbExpenses = financials.reduce((sum, line) => sum + line.wbExpenses, 0);
-    const totalUnitCost = product?.costs[0]?.totalUnitCost ?? null;
+    const logistics = financials.reduce((sum, line) => sum + line.logistics, 0);
+    const storage = financials.reduce((sum, line) => sum + line.storage, 0);
+    const otherDeductions = financials.reduce((sum, line) => sum + line.otherDeductions, 0);
+    const penalties = financials.reduce((sum, line) => sum + line.penalties, 0);
+    const savedCost = product?.costs[0] ?? null;
+    const costBreakdown = savedCost
+      ? {
+          purchaseCost: savedCost.purchaseCost,
+          packagingCost: 0,
+          fulfillmentCost: savedCost.fulfillmentCost,
+          deliveryToWarehouseCost: savedCost.deliveryToWarehouseCost,
+          markingCost: 0,
+          otherUnitCost: 0
+        }
+      : null;
+    const totalUnitCost = costBreakdown
+      ? costBreakdown.purchaseCost + costBreakdown.fulfillmentCost + costBreakdown.deliveryToWarehouseCost
+      : null;
     const missingCost = totalUnitCost === null || totalUnitCost <= 0;
     const productCost = missingCost ? 0 : totalUnitCost * Math.max(0, unitsSold - returns);
 
@@ -325,7 +367,12 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
       wbCommission,
       payout,
       wbExpenses,
+      logistics,
+      storage,
+      otherDeductions,
+      penalties,
       totalUnitCost,
+      costBreakdown,
       missingCost,
       productCost,
       linesCount: lines.length
@@ -336,6 +383,18 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
   const accountLevelWbExpenses = report.lines
     .filter((line) => line.nmId <= 0)
     .reduce((sum, line) => sum + financialsOfLine(line).wbExpenses, 0);
+  const accountLevelBreakdown = report.lines
+    .filter((line) => line.nmId <= 0)
+    .map(financialsOfLine)
+    .reduce(
+      (totals, line) => ({
+        logistics: totals.logistics + line.logistics,
+        storage: totals.storage + line.storage,
+        otherDeductions: totals.otherDeductions + line.otherDeductions,
+        penalties: totals.penalties + line.penalties
+      }),
+      { logistics: 0, storage: 0, otherDeductions: 0, penalties: 0 }
+    );
 
   const preTaxProducts = preProducts.map((item) => {
     const shareBase = Math.max(0, item.revenue || item.payout);
@@ -345,9 +404,25 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
       allocationBase > 0 ? byRevenueShareExpenses * share : 0;
     const payout = item.payout - allocatedWbExpenses;
     const wbExpenses = item.wbExpenses + allocatedWbExpenses;
+    const logistics = item.logistics + accountLevelBreakdown.logistics * share;
+    const storage = item.storage + accountLevelBreakdown.storage * share;
+    const otherDeductions = item.otherDeductions + accountLevelBreakdown.otherDeductions * share;
+    const penalties = item.penalties + accountLevelBreakdown.penalties * share;
     const profitBeforeOperatingExpenses = payout - item.productCost;
     const profitBeforeTax = profitBeforeOperatingExpenses - operatingExpenses;
-    return { ...item, payout, wbExpenses, operatingExpenses, profitBeforeOperatingExpenses, profitBeforeTax, share };
+    return {
+      ...item,
+      payout,
+      wbExpenses,
+      logistics,
+      storage,
+      otherDeductions,
+      penalties,
+      operatingExpenses,
+      profitBeforeOperatingExpenses,
+      profitBeforeTax,
+      share
+    };
   });
 
   const reportFinancials = report.lines.map(financialsOfLine);
@@ -356,6 +431,10 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
   const totalWbCommission = reportFinancials.reduce((sum, line) => sum + line.wbCommission, 0);
   const totalForPay = reportFinancials.reduce((sum, line) => sum + line.payout, 0);
   const totalWbExpenses = reportFinancials.reduce((sum, line) => sum + line.wbExpenses, 0);
+  const totalLogistics = reportFinancials.reduce((sum, line) => sum + line.logistics, 0);
+  const totalStorage = reportFinancials.reduce((sum, line) => sum + line.storage, 0);
+  const totalOtherDeductions = reportFinancials.reduce((sum, line) => sum + line.otherDeductions, 0);
+  const totalPenalties = reportFinancials.reduce((sum, line) => sum + line.penalties, 0);
   const totalProductCost = preTaxProducts.reduce((sum, item) => sum + item.productCost, 0);
   const totalOperatingExpenses = storeLevelOperatingExpenses + byRevenueShareExpenses;
   const profitBeforeOperatingExpenses = totalForPay - totalProductCost;
@@ -387,6 +466,10 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
       wbCommission: roundMoney(item.wbCommission),
       forPay: roundMoney(item.payout),
       wbExpenses: roundMoney(item.wbExpenses),
+      logistics: roundMoney(item.logistics),
+      storage: roundMoney(item.storage),
+      otherDeductions: roundMoney(item.otherDeductions),
+      penalties: roundMoney(item.penalties),
       productCost: roundMoney(item.productCost),
       operatingExpenses: roundMoney(item.operatingExpenses),
       tax: roundMoney(productTax),
@@ -396,6 +479,7 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
       margin: roundMargin(margin),
       roi: roundMargin(roi),
       totalUnitCost: item.totalUnitCost,
+      costBreakdown: item.costBreakdown,
       missingCost: item.missingCost,
       status: getStatus(finalProfit, margin, item.missingCost),
       linesCount: item.linesCount
@@ -413,6 +497,10 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
     wbCommission: roundMoney(totalWbCommission),
     forPay: roundMoney(totalForPay),
     wbExpenses: roundMoney(totalWbExpenses),
+    logistics: roundMoney(totalLogistics),
+    storage: roundMoney(totalStorage),
+    otherDeductions: roundMoney(totalOtherDeductions),
+    penalties: roundMoney(totalPenalties),
     productCost: roundMoney(totalProductCost),
     operatingExpenses: roundMoney(totalOperatingExpenses),
     tax: roundMoney(tax),
@@ -456,9 +544,10 @@ export async function getReportProductDetail(reportId: string, nmId: number, acc
   const bySize = new Map<string, { size: string; units: number; forPay: number; profitHint: number }>();
   for (const line of lines) {
     const amounts = financialsOfLine(line);
+    const saleQuantity = correctedSaleQuantity(line);
     const size = line.size || "Без размера";
     const current = bySize.get(size) ?? { size, units: 0, forPay: 0, profitHint: 0 };
-    current.units += line.quantity;
+    current.units += saleQuantity;
     current.forPay += amounts.payout;
     current.profitHint += amounts.payout;
     bySize.set(size, current);
@@ -479,7 +568,7 @@ export async function getReportProductDetail(reportId: string, nmId: number, acc
         operationType: line.operationType,
         barcode: line.barcode,
         size: line.size,
-        quantity: line.quantity,
+        quantity: correctedSaleQuantity(line),
         retailAmount: amounts.revenue,
         forPay: amounts.payout,
         commission: signedTransactionAmount(line.commission, line.operationType),

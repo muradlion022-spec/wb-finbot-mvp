@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
-import { calculateReportSummary, getReportProductDetail } from "./calculations.js";
+import { calculateReportSummary, getReportProductDetail, normalizeTaxMode } from "./calculations.js";
 import { config } from "./config.js";
 import { bootstrapDemo } from "./demo.js";
 import { prisma } from "./db.js";
@@ -64,9 +64,8 @@ const reportImportSchema = z.object({
 const taxModeSchema = z.enum([
   "none",
   "usn_income_1",
-  "usn_income_5",
   "usn_income_6",
-  "usn_profit_6",
+  "usn_profit_5",
   "usn_profit_15"
 ]);
 
@@ -199,7 +198,7 @@ app.get("/api/account", async (context) => {
     id: account.id,
     name: account.name,
     tokenStatus: account.tokenStatus,
-    taxMode: account.taxMode,
+    taxMode: normalizeTaxMode(account.taxMode),
     useDemoData: config.USE_DEMO_DATA,
     version: config.BUILD_VERSION
   });
@@ -293,11 +292,18 @@ app.put("/api/products/:id/cost", async (context) => {
   const account = await getCurrentAccount(context);
   const productId = context.req.param("id");
   const body = productCostSchema.parse(await context.req.json());
-  const totalUnitCost = Object.values(body).reduce((sum, value) => sum + value, 0);
+  const savedCost = {
+    ...body,
+    packagingCost: 0,
+    markingCost: 0,
+    otherUnitCost: 0
+  };
+  const totalUnitCost =
+    savedCost.purchaseCost + savedCost.fulfillmentCost + savedCost.deliveryToWarehouseCost;
   const product = await prisma.product.findFirst({ where: { id: productId, wbAccountId: account.id }, select: { id: true } });
   if (!product) return responseError(context, 404, "Товар не найден.", "product_not_found");
   await prisma.productCost.updateMany({ where: { productId, validTo: null }, data: { validTo: new Date() } });
-  const cost = await prisma.productCost.create({ data: { productId, ...body, totalUnitCost, validFrom: new Date() } });
+  const cost = await prisma.productCost.create({ data: { productId, ...savedCost, totalUnitCost, validFrom: new Date() } });
   return context.json({ cost });
 });
 

@@ -49,7 +49,15 @@ const STRING_KEYS = {
   barcode: ["barcode", "bar_code", "sku", "Штрихкод"],
   size: ["techSize", "size", "tech_size", "ts_name", "Размер"],
   operationDate: ["rrDate", "saleDt", "orderDt", "operationDate", "operation_dt", "rr_dt", "sale_dt", "order_dt", "Дата"],
-  operationType: ["docTypeName", "sellerOperName", "operationType", "supplier_oper_name", "doc_type_name", "operation", "Операция"]
+  sellerOperation: [
+    "sellerOperName",
+    "supplier_oper_name",
+    "operationType",
+    "operation",
+    "Обоснование для оплаты",
+    "Операция"
+  ],
+  documentType: ["docTypeName", "doc_type_name", "Тип документа"]
 } as const;
 
 function getValue(row: Record<string, unknown>, keys: readonly string[]) {
@@ -97,22 +105,18 @@ function toStringValue(value: unknown) {
   return String(value).trim() || null;
 }
 
-function isReturnOperation(operationType: string | null) {
-  if (!operationType) {
-    return false;
-  }
+function normalizedOperation(value: string | null) {
+  return value?.trim().toLowerCase() ?? "";
+}
 
-  const normalized = operationType.toLowerCase();
-  return normalized.includes("возврат") || normalized.includes("return");
+function isReturnOperation(operationType: string | null) {
+  const normalized = normalizedOperation(operationType);
+  return normalized === "return" || normalized.startsWith("return ") || normalized.startsWith("возврат");
 }
 
 function isSaleOperation(operationType: string | null) {
-  if (!operationType) {
-    return false;
-  }
-
-  const normalized = operationType.toLowerCase();
-  return normalized.includes("продаж") || normalized.includes("sale");
+  const normalized = normalizedOperation(operationType);
+  return normalized === "sale" || normalized.startsWith("sale ") || normalized.startsWith("продажа");
 }
 
 function signedTransactionAmount(value: number, operationType: string | null) {
@@ -120,7 +124,9 @@ function signedTransactionAmount(value: number, operationType: string | null) {
 }
 
 export function normalizeReportLine(row: Record<string, unknown>): NormalizedReportLineInput | null {
-  const operationType = toStringValue(getValue(row, STRING_KEYS.operationType));
+  const sellerOperation = toStringValue(getValue(row, STRING_KEYS.sellerOperation));
+  const documentType = toStringValue(getValue(row, STRING_KEYS.documentType));
+  const operationType = sellerOperation || documentType;
   const nmId = toInteger(getValue(row, NUMBER_KEYS.nmId));
   const retailAmount = toNumber(getValue(row, NUMBER_KEYS.retailAmount));
   const forPay = toNumber(getValue(row, NUMBER_KEYS.forPay));
@@ -150,17 +156,8 @@ export function normalizeReportLine(row: Record<string, unknown>): NormalizedRep
     return null;
   }
 
-  const rawQuantity = toInteger(getValue(row, NUMBER_KEYS.quantity));
-  const quantity =
-    rawQuantity !== 0
-      ? isReturnOperation(operationType) && rawQuantity > 0
-        ? -rawQuantity
-        : rawQuantity
-      : isReturnOperation(operationType)
-        ? -1
-        : isSaleOperation(operationType)
-          ? 1
-          : 0;
+  const quantity = saleQuantityFromReportRow(row, operationType);
+  const returnOperation = isReturnOperation(sellerOperation) || isReturnOperation(documentType);
 
   return {
     nmId,
@@ -170,9 +167,9 @@ export function normalizeReportLine(row: Record<string, unknown>): NormalizedRep
     operationDate: toStringValue(getValue(row, STRING_KEYS.operationDate)),
     operationType,
     quantity,
-    retailAmount: signedTransactionAmount(retailAmount, operationType),
-    forPay: signedTransactionAmount(forPay, operationType),
-    commission: signedTransactionAmount(commission, operationType),
+    retailAmount: signedTransactionAmount(retailAmount, returnOperation ? "Возврат" : operationType),
+    forPay: signedTransactionAmount(forPay, returnOperation ? "Возврат" : operationType),
+    commission: signedTransactionAmount(commission, returnOperation ? "Возврат" : operationType),
     deliveryService,
     storageFee,
     acceptanceFee,
@@ -181,6 +178,27 @@ export function normalizeReportLine(row: Record<string, unknown>): NormalizedRep
     additionalPayment,
     raw: row
   };
+}
+
+export function saleQuantityFromReportRow(
+  row: Record<string, unknown>,
+  fallbackOperationType: string | null = null,
+  fallbackQuantity = 0
+) {
+  const sellerOperation = toStringValue(getValue(row, STRING_KEYS.sellerOperation));
+  const documentType = toStringValue(getValue(row, STRING_KEYS.documentType));
+  const operationType = sellerOperation || documentType || fallbackOperationType;
+  const isReturn = isReturnOperation(sellerOperation) || isReturnOperation(documentType) || isReturnOperation(operationType);
+  const isSale = isSaleOperation(sellerOperation) || (!sellerOperation && isSaleOperation(documentType)) || isSaleOperation(operationType);
+
+  if (!isSale && !isReturn) {
+    return 0;
+  }
+
+  const rawQuantityValue = getValue(row, NUMBER_KEYS.quantity);
+  const rawQuantity = rawQuantityValue === undefined ? fallbackQuantity : toInteger(rawQuantityValue);
+  const absoluteQuantity = Math.abs(rawQuantity) || 1;
+  return isReturn ? -absoluteQuantity : absoluteQuantity;
 }
 
 export function normalizeReportLines(rows: Record<string, unknown>[]) {
