@@ -1,0 +1,19 @@
+{
+  "buildCommand": "pnpm vercel-build",
+  "outputDirectory": "dist/web",
+  "functions": {
+    "api/router.ts": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/router?__path=:path*"
+    },
+    {
+      "source": "/((?!api/.*).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

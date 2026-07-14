@@ -1,0 +1,43 @@
+{
+  "name": "wb-finbot-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "node --import tsx src/server/index.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "prisma generate && tsc --noEmit && vite build",
+    "start": "node --import tsx src/server/index.ts",
+    "db:push": "prisma db push --schema prisma/schema.sqlite.prisma",
+    "db:seed": "node --import tsx prisma/seed.ts",
+    "prisma:generate": "prisma generate",
+    "lint": "tsc --noEmit",
+    "vercel-build": "node scripts/vercel-build.mjs",
+    "db:push:local": "prisma db push --schema prisma/schema.sqlite.prisma",
+    "db:push:prod": "prisma db push",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "prisma:generate:local": "prisma generate --schema prisma/schema.sqlite.prisma"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.8",
+    "@prisma/client": "^6.2.1",
+    "dotenv": "^16.4.7",
+    "grammy": "^1.34.0",
+    "hono": "^4.6.18",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "prisma": "^6.2.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7"
+  }
+}
