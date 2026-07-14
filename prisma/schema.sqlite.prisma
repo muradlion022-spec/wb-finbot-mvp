@@ -1,0 +1,174 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String      @id @default(cuid())
+  telegramId String      @unique
+  username   String?
+  firstName  String?
+  pendingAction String?
+  createdAt  DateTime    @default(now())
+  wbAccounts WbAccount[]
+}
+
+model WbAccount {
+  id                String             @id @default(cuid())
+  userId            String
+  name              String
+  encryptedApiToken String?
+  tokenStatus       String             @default("not_connected")
+  tokenLast4        String?
+  tokenConnectedAt  DateTime?
+  taxMode           String             @default("none")
+  reportsSyncedAt   DateTime?
+  reportsSyncError  String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  products          Product[]
+  financialReports  FinancialReport[]
+  operatingExpenses OperatingExpense[]
+  syncStates        WbSyncState[]
+
+  @@index([userId])
+}
+
+model Product {
+  id          String                @id @default(cuid())
+  wbAccountId String
+  nmId        Int
+  vendorCode  String
+  title       String?
+  brand       String?
+  subjectName String?
+  photoUrl    String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  wbAccount   WbAccount             @relation(fields: [wbAccountId], references: [id], onDelete: Cascade)
+  costs       ProductCost[]
+  reportLines FinancialReportLine[]
+
+  @@unique([wbAccountId, nmId])
+  @@index([wbAccountId, vendorCode])
+}
+
+model ProductCost {
+  id                      String    @id @default(cuid())
+  productId               String
+  purchaseCost            Float     @default(0)
+  packagingCost           Float     @default(0)
+  fulfillmentCost         Float     @default(0)
+  deliveryToWarehouseCost Float     @default(0)
+  markingCost             Float     @default(0)
+  otherUnitCost           Float     @default(0)
+  totalUnitCost           Float     @default(0)
+  validFrom               DateTime  @default(now())
+  validTo                 DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  product                 Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId, validFrom])
+}
+
+model FinancialReport {
+  id                   String                @id @default(cuid())
+  wbAccountId          String
+  reportId             String
+  dateFrom             DateTime
+  dateTo               DateTime
+  createdAtWb          DateTime?
+  totalRetailAmount    Float                 @default(0)
+  totalForPay          Float                 @default(0)
+  totalDeliveryService Float                 @default(0)
+  totalStorage         Float                 @default(0)
+  totalAcceptance      Float                 @default(0)
+  totalPenalty         Float                 @default(0)
+  totalDeduction       Float                 @default(0)
+  totalBankPayment     Float                 @default(0)
+  detailsSyncedAt      DateTime?
+  lastRrdId            String?
+  syncStatus           String                @default("not_loaded")
+  contentEnrichmentStatus String              @default("not_started")
+  contentEnrichmentError  String?
+  rawJson              String                @default("{}")
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  wbAccount            WbAccount             @relation(fields: [wbAccountId], references: [id], onDelete: Cascade)
+  lines                FinancialReportLine[]
+
+  @@unique([wbAccountId, reportId])
+  @@index([wbAccountId, dateFrom, dateTo])
+}
+
+model WbSyncState {
+  id                String    @id @default(cuid())
+  wbAccountId       String
+  endpointType      String
+  status            String    @default("not_loaded")
+  lockedAt          DateTime?
+  cooldownUntil     DateTime?
+  lastSuccessAt     DateTime?
+  lastErrorCode     String?
+  retryAfterSeconds Int?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  wbAccount         WbAccount @relation(fields: [wbAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([wbAccountId, endpointType])
+  @@index([wbAccountId, cooldownUntil])
+}
+
+model FinancialReportLine {
+  id                String          @id @default(cuid())
+  financialReportId String
+  productId         String?
+  nmId              Int
+  vendorCode        String
+  barcode           String?
+  size              String?
+  operationDate     DateTime?
+  operationType     String?
+  quantity          Int             @default(0)
+  retailAmount      Float           @default(0)
+  forPay            Float           @default(0)
+  commission        Float           @default(0)
+  deliveryService   Float           @default(0)
+  storageFee        Float           @default(0)
+  acceptanceFee     Float           @default(0)
+  penalty           Float           @default(0)
+  deduction         Float           @default(0)
+  additionalPayment Float           @default(0)
+  rawJson           String          @default("{}")
+  createdAt         DateTime        @default(now())
+  financialReport   FinancialReport @relation(fields: [financialReportId], references: [id], onDelete: Cascade)
+  product           Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([financialReportId, nmId])
+  @@index([productId])
+}
+
+model OperatingExpense {
+  id             String    @id @default(cuid())
+  wbAccountId    String
+  title          String
+  category       String
+  amount         Float
+  expenseType    String
+  recurrenceType String    @default("none")
+  expenseDate    DateTime?
+  dayOfMonth     Int?
+  allocationMode String
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  wbAccount      WbAccount @relation(fields: [wbAccountId], references: [id], onDelete: Cascade)
+
+  @@index([wbAccountId, active])
+}
