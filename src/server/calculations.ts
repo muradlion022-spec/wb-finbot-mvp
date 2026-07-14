@@ -7,6 +7,7 @@ import type {
 import { prisma } from "./db.js";
 import { saleQuantityFromReportRow } from "./normalizer.js";
 import { productCostAt, totalProductUnitCost } from "./productCosts.js";
+import { getPromotionSpendSnapshot } from "./promotion.js";
 import type { WbReportTotals } from "./wbClient.js";
 
 type Expense = {
@@ -28,6 +29,14 @@ function roundMoney(value: number) {
 
 function roundMargin(value: number | null) {
   return value === null ? null : Math.round(value * 10) / 10;
+}
+
+function percentage(value: number, base: number) {
+  return base > 0 ? roundMargin((value / base) * 100) : null;
+}
+
+function amountPerUnit(value: number, units: number) {
+  return units > 0 ? roundMoney(value / units) : null;
 }
 
 function startOfDay(date: Date) {
@@ -345,6 +354,9 @@ export async function calculateCombinedReportSummary(reportIds: string[], accoun
   const dateFrom = new Date(Math.min(...reports.map((report) => report.dateFrom.getTime())));
   const dateTo = new Date(Math.max(...reports.map((report) => report.dateTo.getTime())));
   const reportDateTo = new Map(reports.map((report) => [report.id, report.dateTo]));
+  const promotion = await getPromotionSpendSnapshot(account.id, toIsoDate(dateFrom), toIsoDate(dateTo));
+  const promotionMetricsAvailable =
+    promotion.status === "ready" || promotion.status === "partial" || promotion.byNmId.size > 0;
 
   const productGroups = new Map<number, typeof lines>();
   for (const line of lines) {
@@ -381,6 +393,7 @@ export async function calculateCombinedReportSummary(reportIds: string[], accoun
     const storage = financials.reduce((sum, line) => sum + line.storage, 0);
     const otherDeductions = financials.reduce((sum, line) => sum + line.otherDeductions, 0);
     const penalties = financials.reduce((sum, line) => sum + line.penalties, 0);
+    const adSpend = promotion.byNmId.get(nmId) ?? 0;
     const latestCost = product?.costs.at(-1) ?? null;
     const costBreakdown = latestCost
       ? {
@@ -428,6 +441,7 @@ export async function calculateCombinedReportSummary(reportIds: string[], accoun
       storage,
       otherDeductions,
       penalties,
+      adSpend,
       totalUnitCost,
       costBreakdown,
       missingCost,
@@ -522,6 +536,7 @@ export async function calculateCombinedReportSummary(reportIds: string[], accoun
       storage,
       otherDeductions,
       penalties,
+      adSpend: item.adSpend,
       operatingExpenses,
       profitBeforeOperatingExpenses,
       profitBeforeTax,
@@ -564,6 +579,13 @@ export async function calculateCombinedReportSummary(reportIds: string[], accoun
       storage: roundMoney(item.storage),
       otherDeductions: roundMoney(item.otherDeductions),
       penalties: roundMoney(item.penalties),
+      adSpend: promotionMetricsAvailable ? roundMoney(item.adSpend) : null,
+      drr:
+        promotionMetricsAvailable ? percentage(item.adSpend, item.revenue) : null,
+      wbDeductionsRate: percentage(item.wbCommission + item.wbExpenses, item.revenue),
+      commissionRate: percentage(item.wbCommission, item.revenue),
+      logisticsPerUnit: amountPerUnit(item.logistics, item.unitsSold),
+      buyoutRate: percentage(item.unitsSold, item.unitsSold + item.returns),
       productCost: roundMoney(item.productCost),
       operatingExpenses: roundMoney(item.operatingExpenses),
       tax: roundMoney(productTax),
@@ -588,6 +610,10 @@ export async function calculateCombinedReportSummary(reportIds: string[], accoun
     dateFrom: toIsoDate(dateFrom),
     dateTo: toIsoDate(dateTo),
     taxMode,
+    promotionStatus: promotion.status,
+    promotionWarning: promotion.warning,
+    unitsSold: products.reduce((sum, item) => sum + item.unitsSold, 0),
+    returns: products.reduce((sum, item) => sum + item.returns, 0),
     revenue: roundMoney(totalRevenue),
     goodsForPay: roundMoney(totalGoodsForPay),
     wbCommission: roundMoney(totalWbCommission),
@@ -597,6 +623,15 @@ export async function calculateCombinedReportSummary(reportIds: string[], accoun
     storage: roundMoney(totalStorage),
     otherDeductions: roundMoney(totalOtherDeductions),
     penalties: roundMoney(totalPenalties),
+    adSpend: promotionMetricsAvailable ? roundMoney(promotion.total) : null,
+    drr: promotionMetricsAvailable ? percentage(promotion.total, totalRevenue) : null,
+    wbDeductionsRate: percentage(totalWbCommission + totalWbExpenses, totalRevenue),
+    commissionRate: percentage(totalWbCommission, totalRevenue),
+    logisticsPerUnit: amountPerUnit(totalLogistics, products.reduce((sum, item) => sum + item.unitsSold, 0)),
+    buyoutRate: percentage(
+      products.reduce((sum, item) => sum + item.unitsSold, 0),
+      products.reduce((sum, item) => sum + item.unitsSold + item.returns, 0)
+    ),
     productCost: roundMoney(totalProductCost),
     operatingExpenses: roundMoney(totalOperatingExpenses),
     tax: roundMoney(tax),
@@ -641,24 +676,80 @@ export async function getCombinedReportProductDetail(reportIds: string[], nmId: 
     orderBy: [{ operationDate: "asc" }, { createdAt: "asc" }]
   });
 
-  const bySize = new Map<string, { size: string; units: number; forPay: number; profitHint: number }>();
-  for (const line of lines) {
+  type Movement = {
+    label: string;
+    unitsSold: number;
+    returns: number;
+    revenue: number;
+    forPay: number;
+    commission: number;
+    logistics: number;
+    storage: number;
+    otherDeductions: number;
+    penalties: number;
+  };
+  const newMovement = (label: string): Movement => ({
+    label,
+    unitsSold: 0,
+    returns: 0,
+    revenue: 0,
+    forPay: 0,
+    commission: 0,
+    logistics: 0,
+    storage: 0,
+    otherDeductions: 0,
+    penalties: 0
+  });
+  const addLine = (movement: Movement, line: (typeof lines)[number]) => {
     const amounts = financialsOfLine(line);
-    const saleQuantity = correctedSaleQuantity(line);
+    const quantity = correctedSaleQuantity(line);
+    movement.unitsSold += Math.max(0, quantity);
+    movement.returns += Math.abs(Math.min(0, quantity));
+    movement.revenue += amounts.revenue;
+    movement.forPay += amounts.payout;
+    movement.commission += amounts.wbCommission;
+    movement.logistics += amounts.logistics;
+    movement.storage += amounts.storage;
+    movement.otherDeductions += amounts.otherDeductions;
+    movement.penalties += amounts.penalties;
+  };
+  const serializeMovement = (movement: Movement) => ({
+    ...movement,
+    revenue: roundMoney(movement.revenue),
+    forPay: roundMoney(movement.forPay),
+    commission: roundMoney(movement.commission),
+    logistics: roundMoney(movement.logistics),
+    storage: roundMoney(movement.storage),
+    otherDeductions: roundMoney(movement.otherDeductions),
+    penalties: roundMoney(movement.penalties),
+    buyoutRate: percentage(movement.unitsSold, movement.unitsSold + movement.returns)
+  });
+
+  const bySize = new Map<string, Movement>();
+  const byDay = new Map<string, Movement>();
+  const bySizeDay = new Map<string, Map<string, Movement>>();
+  for (const line of lines) {
     const size = line.size || "Без размера";
-    const current = bySize.get(size) ?? { size, units: 0, forPay: 0, profitHint: 0 };
-    current.units += saleQuantity;
-    current.forPay += amounts.payout;
-    current.profitHint += amounts.payout;
-    bySize.set(size, current);
+    const date = line.operationDate?.toISOString().slice(0, 10) ?? "Без даты";
+    const sizeMovement = bySize.get(size) ?? newMovement(size);
+    const dayMovement = byDay.get(date) ?? newMovement(date);
+    const sizeDays = bySizeDay.get(size) ?? new Map<string, Movement>();
+    const sizeDayMovement = sizeDays.get(date) ?? newMovement(date);
+    addLine(sizeMovement, line);
+    addLine(dayMovement, line);
+    addLine(sizeDayMovement, line);
+    bySize.set(size, sizeMovement);
+    byDay.set(date, dayMovement);
+    sizeDays.set(date, sizeDayMovement);
+    bySizeDay.set(size, sizeDays);
   }
 
   return {
     product,
+    byDay: [...byDay.values()].map(serializeMovement),
     bySize: [...bySize.values()].map((item) => ({
-      ...item,
-      forPay: roundMoney(item.forPay),
-      profitHint: roundMoney(item.profitHint)
+      ...serializeMovement(item),
+      days: [...(bySizeDay.get(item.label)?.values() ?? [])].map(serializeMovement)
     })),
     lines: lines.map((line) => {
       const amounts = financialsOfLine(line);

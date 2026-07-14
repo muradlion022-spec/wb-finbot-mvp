@@ -14,6 +14,7 @@ const envSchema = z.object({
   WB_API_BASE_URL: z.string().url().default("https://statistics-api.wildberries.ru"),
   WB_FINANCE_API_BASE_URL: z.string().url().default("https://finance-api.wildberries.ru"),
   WB_CONTENT_API_BASE_URL: z.string().url().default("https://content-api.wildberries.ru"),
+  WB_PROMOTION_API_BASE_URL: z.string().url().default("https://advert-api.wildberries.ru"),
   MINI_APP_URL: z.string().url().default("http://localhost:5173"),
   API_PORT: z.coerce.number().int().positive().default(3000),
   USE_DEMO_DATA: z

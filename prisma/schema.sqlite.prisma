@@ -35,8 +35,24 @@ model WbAccount {
   financialReports  FinancialReport[]
   operatingExpenses OperatingExpense[]
   syncStates        WbSyncState[]
+  promotionSpend    PromotionSpendDaily[]
 
   @@index([userId])
+}
+
+model PromotionSpendDaily {
+  id          String    @id @default(cuid())
+  wbAccountId String
+  date        DateTime
+  nmId        Int
+  amount      Float     @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  wbAccount   WbAccount @relation(fields: [wbAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([wbAccountId, date, nmId])
+  @@index([wbAccountId, date])
+  @@index([wbAccountId, nmId, date])
 }
 
 model Product {

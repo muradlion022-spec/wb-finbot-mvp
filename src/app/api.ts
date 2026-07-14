@@ -20,7 +20,8 @@ export type SummaryResponse = (ReportSummary & { sync?: SyncInfo }) | PendingRep
 
 export type ProductDetailResponse = {
   product: import("../shared/types.js").ProductReportItem;
-  bySize: Array<{ size: string; units: number; forPay: number; profitHint: number }>;
+  byDay: MovementItem[];
+  bySize: Array<MovementItem & { days: MovementItem[] }>;
   lines: Array<{
     id: string;
     operationDate: string | null;
@@ -38,6 +39,20 @@ export type ProductDetailResponse = {
     deduction: number;
     additionalPayment: number;
   }>;
+};
+
+export type MovementItem = {
+  label: string;
+  unitsSold: number;
+  returns: number;
+  revenue: number;
+  forPay: number;
+  commission: number;
+  logistics: number;
+  storage: number;
+  otherDeductions: number;
+  penalties: number;
+  buyoutRate: number | null;
 };
 
 type ErrorPayload = { error?: string; code?: string; requestId?: string };

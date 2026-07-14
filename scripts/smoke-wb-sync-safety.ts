@@ -38,6 +38,7 @@ const finance = await listen((req, res) => {
     res.end(body === undefined ? "" : JSON.stringify(body));
   };
   if (req.url === "/ping") return send(200, { ok: true });
+  if (req.url === "/adv/v1/promotion/count") return send(403, { message: "promotion rights missing" });
   if (req.url === "/api/finance/v1/sales-reports/list") {
     financeListCalls += 1;
     if (listStatus !== 200) return send(listStatus, { message: "rate limited" });
@@ -106,6 +107,7 @@ const content = await listen((req, res) => {
 
 process.env.WB_FINANCE_API_BASE_URL = finance.baseUrl;
 process.env.WB_CONTENT_API_BASE_URL = content.baseUrl;
+process.env.WB_PROMOTION_API_BASE_URL = finance.baseUrl;
 execFileSync(process.execPath, [prismaCli, "generate", "--schema", "prisma/schema.sqlite.prisma"], { cwd: root, env: process.env, stdio: "inherit" });
 execFileSync(process.execPath, [prismaCli, "db", "push", "--schema", "prisma/schema.sqlite.prisma", "--skip-generate"], { cwd: root, env: process.env, stdio: "inherit" });
 
@@ -166,6 +168,8 @@ try {
   assert.equal(summary.storage, 5);
   assert.equal(summary.otherDeductions, 2);
   assert.equal(summary.penalties, 1);
+  assert.equal(summary.promotionStatus, "missing_rights");
+  assert.equal(summary.adSpend, null);
   assert.equal(financeDetailedCalls, 1);
   const enrichment = await enrichReportProducts(loaded.report.id, account.id);
   assert.equal(enrichment.status, "failed_optional");
@@ -208,6 +212,35 @@ try {
 
   const referenceProduct = wbReferenceSummary.products[0];
   assert.ok(referenceProduct);
+  await prisma.promotionSpendDaily.create({
+    data: {
+      wbAccountId: account.id,
+      date: new Date("2026-07-01T00:00:00.000Z"),
+      nmId: referenceProduct.nmId,
+      amount: 95064.67
+    }
+  });
+  await prisma.wbSyncState.upsert({
+    where: {
+      wbAccountId_endpointType: {
+        wbAccountId: account.id,
+        endpointType: "promotion:2026-06-29:2026-07-05"
+      }
+    },
+    create: {
+      wbAccountId: account.id,
+      endpointType: "promotion:2026-06-29:2026-07-05",
+      status: "ready",
+      lastSuccessAt: new Date()
+    },
+    update: { status: "ready", lastSuccessAt: new Date(), lastErrorCode: null }
+  });
+  const promotedReferenceSummary = await calculateReportSummary(wbReferenceReport.id, account.id);
+  assert.equal(promotedReferenceSummary.promotionStatus, "ready");
+  assert.equal(promotedReferenceSummary.adSpend, 95064.67);
+  assert.equal(promotedReferenceSummary.drr, 10);
+  assert.equal(promotedReferenceSummary.products[0]?.adSpend, 95064.67);
+  assert.equal(promotedReferenceSummary.products[0]?.drr, 10);
   await prisma.productCost.create({
     data: {
       productId: referenceProduct.productId,
@@ -338,10 +371,17 @@ try {
     method: "POST",
     body: JSON.stringify({ reportIds: [historicalFirst.id, historicalSecond.id] })
   });
-  const combinedProductBody = (await combinedProductResponse.json()) as { product?: { productCost?: number }; lines?: unknown[] };
+  const combinedProductBody = (await combinedProductResponse.json()) as {
+    product?: { productCost?: number };
+    lines?: unknown[];
+    byDay?: unknown[];
+    bySize?: Array<{ days?: unknown[] }>;
+  };
   assert.equal(combinedProductResponse.status, 200);
   assert.equal(combinedProductBody.product?.productCost, 500);
   assert.equal(combinedProductBody.lines?.length, 2);
+  assert.equal(combinedProductBody.byDay?.length, 2);
+  assert.equal(combinedProductBody.bySize?.[0]?.days?.length, 2);
   console.log("historical costs and combined reports: dated prices applied and operating expense counted once");
 
   await prisma.wbAccount.update({ where: { id: account.id }, data: { reportsSyncedAt: new Date(Date.now() - 70_000) } });

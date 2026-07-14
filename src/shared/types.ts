@@ -68,6 +68,12 @@ export type MoneyBreakdown = {
   storage: number;
   otherDeductions: number;
   penalties: number;
+  adSpend: number | null;
+  drr: number | null;
+  wbDeductionsRate: number | null;
+  commissionRate: number | null;
+  logisticsPerUnit: number | null;
+  buyoutRate: number | null;
   productCost: number;
   operatingExpenses: number;
   tax: number;
@@ -109,6 +115,10 @@ export type ReportSummary = MoneyBreakdown & {
   dateFrom: string;
   dateTo: string;
   taxMode: TaxMode;
+  promotionStatus: "ready" | "partial" | "not_connected" | "missing_rights" | "rate_limited" | "loading" | "unavailable";
+  promotionWarning: string | null;
+  unitsSold: number;
+  returns: number;
   totalProducts: number;
   missingCostProducts: number;
   lossProducts: number;

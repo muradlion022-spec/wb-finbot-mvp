@@ -1,15 +1,47 @@
 # Test Results — 2026-07-14
 
+## Promotion spend and article analytics update — 2026-07-14
+
+Approved scope: actual Promotion API spend per `nmId`, total/article DRR, clearer
+WB deduction metrics, daily and size movement breakdowns. SPP, campaign analytics,
+keyword analytics, anomalies and unit-economics calculators are intentionally absent.
+
+Implemented checks:
+
+- Promotion client uses `/adv/v1/promotion/count` and `/adv/v3/fullstats` with the
+  sanitized WB token in the `Authorization` header.
+- Spend is grouped by `date + nmId`; repeated app/platform rows are summed.
+- Promotion data is cached in `PromotionSpendDaily` and protected by `WbSyncState`
+  lock/cooldown metadata, so opening the same report does not repeat WB requests.
+- Missing Promotion rights do not invalidate a Finance token or hide a financial report.
+- Cached Promotion spend produces report/article `adSpend` and `drr` values.
+- Article detail returns both daily movement rows and size rows with nested days.
+- Source and production build contain no SPP labels or calculations.
+
+Commands passing in the writable verification copy before publication:
+
+- `tsc --noEmit`
+- `node --import tsx scripts/smoke-promotion.ts`
+- `node --import tsx scripts/smoke-normalizer.ts`
+- `node --import tsx scripts/smoke-cost-history.ts`
+- local and production modes of `scripts/smoke-telegram-auth.ts`
+- `node --import tsx scripts/smoke-wb-sync-safety.ts`
+
+The additive migration `20260714133000_promotion_spend` only creates the
+`PromotionSpendDaily` table, indexes and its account foreign key. It has no drop,
+truncate, delete or destructive alteration.
+
 ## Production verification — 2026-07-14
 
 Existing Vercel project `wb-finbot-mvp` was updated without creating a second project,
-database or bot. The GitHub-triggered deployment `dpl_8CEjwuEea5Hi3UDWESp6fu4FsXX3`
+database or bot. The final GitHub-triggered deployment `dpl_4ALQ9auPrNM7m3NMDGTEiitxTwoT`
 is `READY`, and the existing alias `https://wb-finbot-mvp.vercel.app` reports version
-`485d65f1c23f`.
+`d2bf33fbd1e1`. This final commit changes handoff documentation only; application code
+is byte-identical to verified product commit `485d65f1c23f0870d351d14846e8a220c2b661d5`.
 
 | Check | Actual result |
 | --- | --- |
-| `GET /api/health` | HTTP 200, `ok=true`, version `485d65f1c23f` |
+| `GET /api/health` | HTTP 200, `ok=true`, version `d2bf33fbd1e1` |
 | `GET /api/account` without initData | HTTP 401, Telegram authorization required |
 | `OPTIONS /api/account` | HTTP 204; allows `Content-Type,X-Telegram-Init-Data,X-WB-Finbot-Session,X-Request-Id` |
 | Production JS asset | No `localhost`, `127.0.0.1` or `Failed to fetch` |
@@ -44,7 +76,9 @@ from `bc99e9a2389ca2543e1d2ef42e27c8fde0808900` to
 `485d65f1c23f0870d351d14846e8a220c2b661d5` by a normal fast-forward push. Eight differing
 files were published; the other 49 tracked files were byte-identical. No force push or
 repository history rewrite was used. The automatic Vercel deployment became `READY`,
-and the authenticated Telegram/WB report checks were repeated on version `485d65f1c23f`.
+and the authenticated Telegram/WB report checks were repeated on product version
+`485d65f1c23f`. A documentation-only follow-up advanced GitHub `main` to
+`d2bf33fbd1e136d9fb8b8e8cd2c4d45f536766a7` and also deployed successfully.
 
 ## Finance reconciliation update — 2026-07-14
 

@@ -4,6 +4,7 @@ import {
   CalendarDays,
   ChevronLeft,
   CircleDollarSign,
+  Copy,
   Database,
   FileUp,
   KeyRound,
@@ -103,6 +104,14 @@ function money(value: number) {
 
 function percent(value: number | null) {
   return value === null ? "нет данных" : `${value.toLocaleString("ru-RU")} %`;
+}
+
+function moneyAndPercent(amount: number, rate: number | null) {
+  return `${money(amount)} · ${percent(rate)}`;
+}
+
+function promotionValue(amount: number | null, drr: number | null) {
+  return amount === null ? "нет доступа" : `${money(amount)} · ДРР ${percent(drr)}`;
 }
 
 function dateShort(value: string) {
@@ -783,13 +792,28 @@ function Dashboard({ summary }: { summary: ReportSummary }) {
       </div>
 
       <div className="metric-grid">
-        <Metric label="Продажи" value={money(summary.revenue)} />
+        <Metric label="Продажи" value={`${money(summary.revenue)} · ${summary.unitsSold} шт.`} />
+        <Metric label="Выкуп" value={`${percent(summary.buyoutRate)} · возвраты ${summary.returns} шт.`} />
         <Metric label="К перечислению за товар" value={money(summary.goodsForPay)} />
-        <Metric label="Комиссия WB" value={money(summary.wbCommission)} tone="warning" />
-        <Metric label="Логистика" value={money(summary.logistics)} tone="warning" />
+        <Metric
+          label="Комиссия / вознаграждение WB"
+          value={moneyAndPercent(summary.wbCommission, summary.commissionRate)}
+          tone="warning"
+        />
+        <Metric
+          label="Все удержания WB"
+          value={moneyAndPercent(summary.wbCommission + summary.wbExpenses, summary.wbDeductionsRate)}
+          tone="warning"
+        />
+        <Metric
+          label="Логистика"
+          value={`${money(summary.logistics)} · ${summary.logisticsPerUnit === null ? "нет данных" : `${money(summary.logisticsPerUnit)}/шт.`}`}
+          tone="warning"
+        />
         <Metric label="Хранение" value={money(summary.storage)} tone="warning" />
         <Metric label="Прочие удержания" value={money(summary.otherDeductions)} tone="warning" />
         <Metric label="Штрафы" value={money(summary.penalties)} tone="warning" />
+        <Metric label="Продвижение" value={promotionValue(summary.adSpend, summary.drr)} tone="warning" />
         <Metric label="Итого к оплате" value={money(summary.forPay)} />
         <Metric label="Себестоимость продаж" value={money(summary.productCost)} />
         <Metric label="Опер. расходы" value={money(summary.operatingExpenses)} tone="warning" />
@@ -802,6 +826,8 @@ function Dashboard({ summary }: { summary: ReportSummary }) {
         <Metric label="Маржинальность" value={percent(summary.margin)} />
         <Metric label="ROI" value={percent(summary.roi)} />
       </div>
+
+      {summary.promotionWarning && <div className="message message-info">{summary.promotionWarning}</div>}
 
       <section className="panel">
         <h2>Главные выводы</h2>
@@ -866,7 +892,16 @@ function Products({
 
       <div className="product-list">
         {products.map((product) => (
-          <button className="product-row" key={product.nmId} onClick={() => onSelect(product)}>
+          <article
+            className="product-row"
+            key={product.nmId}
+            role="button"
+            tabIndex={0}
+            onClick={() => onSelect(product)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") onSelect(product);
+            }}
+          >
             <ProductImage product={product} />
             <div className="product-main">
               <div className="product-title">
@@ -874,21 +909,36 @@ function Products({
                 <span className={`badge badge-${statusTone(product.status)}`}>{statusLabel(product.status)}</span>
               </div>
               <span className="muted-text">
-                {product.vendorCode} · nmId {product.nmId}
+                {[product.subjectName, product.vendorCode, `nmId ${product.nmId}`].filter(Boolean).join(" · ")}
               </span>
-              <div className="mini-metrics">
-                <span>Продано: {product.unitsSold}</span>
-                <span>Возвраты: {product.returns}</span>
-                <span>Итого к оплате: {money(product.forPay)}</span>
+              <div className="article-metrics">
+                <span><b>Продажи</b>{money(product.revenue)} · {product.unitsSold} шт.</span>
+                <span><b>Выкуп</b>{percent(product.buyoutRate)}</span>
+                <span><b>Удержания WB</b>{moneyAndPercent(product.wbCommission + product.wbExpenses, product.wbDeductionsRate)}</span>
+                <span><b>Комиссия WB</b>{moneyAndPercent(product.wbCommission, product.commissionRate)}</span>
+                <span><b>Логистика / шт.</b>{product.logisticsPerUnit === null ? "нет данных" : money(product.logisticsPerUnit)}</span>
+                <span><b>Продвижение</b>{promotionValue(product.adSpend, product.drr)}</span>
               </div>
             </div>
             <div className="product-profit">
+              <button
+                className="copy-button"
+                type="button"
+                title="Копировать артикул WB"
+                aria-label="Копировать артикул WB"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void navigator.clipboard.writeText(String(product.nmId));
+                }}
+              >
+                <Copy size={16} />
+              </button>
               <strong className={product.finalProfit >= 0 ? "text-positive" : "text-negative"}>
                 {money(product.finalProfit)}
               </strong>
-              <span>{percent(product.margin)}</span>
+              <span>Маржа {percent(product.margin)} · ROI {percent(product.roi)}</span>
             </div>
-          </button>
+          </article>
         ))}
       </div>
     </section>
@@ -1153,6 +1203,7 @@ function SettingsView({
           <KeyRound size={18} />
           <span>{tokenStatusLabel(tokenStatus)}</span>
         </div>
+        <p className="muted-text">Обязательно: Финансы · Только чтение. Для названий и фото добавьте Контент, для рекламных расходов и ДРР — Продвижение.</p>
         <label>
           <span>Новый токен</span>
           <input
@@ -1203,6 +1254,11 @@ function ProductDetail({
   detail: Awaited<ReturnType<typeof api.productDetail>> | null;
   onClose: () => void;
 }) {
+  const [movementMode, setMovementMode] = useState<"days" | "sizes">("days");
+  const [expandedSize, setExpandedSize] = useState<string | null>(null);
+
+  const movementRows = movementMode === "days" ? detail?.byDay ?? [] : detail?.bySize ?? [];
+
   return (
     <aside className="detail-sheet">
       <div className="detail-bar">
@@ -1210,6 +1266,15 @@ function ProductDetail({
           <ChevronLeft size={20} />
         </button>
         <strong>{product.vendorCode}</strong>
+        <button
+          className="icon-button detail-copy"
+          type="button"
+          title="Копировать артикул WB"
+          aria-label="Копировать артикул WB"
+          onClick={() => void navigator.clipboard.writeText(String(product.nmId))}
+        >
+          <Copy size={17} />
+        </button>
       </div>
 
       <div className="detail-content">
@@ -1225,14 +1290,30 @@ function ProductDetail({
 
         <div className="metric-grid">
           <Metric label="Продажи" value={money(product.revenue)} />
+          <Metric label="Продано / возвраты" value={`${product.unitsSold} / ${product.returns} шт.`} />
+          <Metric label="Выкуп" value={percent(product.buyoutRate)} />
           <Metric label="К перечислению за товар" value={money(product.goodsForPay)} />
-          <Metric label="Комиссия WB" value={money(product.wbCommission)} tone="warning" />
+          <Metric
+            label="Комиссия / вознаграждение WB"
+            value={moneyAndPercent(product.wbCommission, product.commissionRate)}
+            tone="warning"
+          />
+          <Metric
+            label="Все удержания WB"
+            value={moneyAndPercent(product.wbCommission + product.wbExpenses, product.wbDeductionsRate)}
+            tone="warning"
+          />
           <Metric label="Итого к оплате" value={money(product.forPay)} />
           <Metric label="Себестоимость" value={money(product.productCost)} />
-          <Metric label="Логистика" value={money(product.logistics)} tone="warning" />
+          <Metric
+            label="Логистика"
+            value={`${money(product.logistics)} · ${product.logisticsPerUnit === null ? "нет данных" : `${money(product.logisticsPerUnit)}/шт.`}`}
+            tone="warning"
+          />
           <Metric label="Хранение" value={money(product.storage)} tone="warning" />
           <Metric label="Прочие удержания" value={money(product.otherDeductions)} tone="warning" />
           <Metric label="Штрафы" value={money(product.penalties)} tone="warning" />
+          <Metric label="Продвижение" value={promotionValue(product.adSpend, product.drr)} tone="warning" />
           <Metric label={taxMetricLabel(taxMode)} value={money(product.tax)} tone="warning" />
           <Metric label="ROI" value={percent(product.roi)} />
           <Metric label="Опер. расходы" value={money(product.operatingExpenses)} tone="warning" />
@@ -1250,18 +1331,69 @@ function ProductDetail({
           </div>
         ) : (
           <>
-            <details open>
-              <summary>По размерам</summary>
-              <div className="small-table">
-                {detail.bySize.map((item) => (
-                  <div key={item.size}>
-                    <span>{item.size}</span>
-                    <span>{item.units}</span>
-                    <span>{money(item.forPay)}</span>
+            <section className="panel movement-panel">
+              <div className="segmented-control" aria-label="Детализация артикула">
+                <button className={movementMode === "days" ? "active" : ""} onClick={() => setMovementMode("days")}>По дням</button>
+                <button className={movementMode === "sizes" ? "active" : ""} onClick={() => setMovementMode("sizes")}>По размерам</button>
+              </div>
+              <div className="movement-table">
+                <div className="movement-head">
+                  <span>{movementMode === "days" ? "Дата" : "Размер"}</span>
+                  <span>Продажи</span>
+                  <span>Шт.</span>
+                  <span>Возв.</span>
+                  <span>Выкуп</span>
+                  <span>К оплате</span>
+                  <span>Комиссия</span>
+                  <span>Логистика</span>
+                  <span>Хранение</span>
+                  <span>Прочее</span>
+                  <span>Штрафы</span>
+                </div>
+                {movementRows.map((item) => (
+                  <div key={item.label}>
+                    <button
+                      type="button"
+                      className="movement-row"
+                      onClick={() => {
+                        if (movementMode === "sizes") setExpandedSize(expandedSize === item.label ? null : item.label);
+                      }}
+                    >
+                      <strong>{item.label === "Без даты" ? item.label : movementMode === "days" ? dateShort(item.label) : item.label}</strong>
+                      <span>{money(item.revenue)}</span>
+                      <span>{item.unitsSold}</span>
+                      <span>{item.returns}</span>
+                      <span>{percent(item.buyoutRate)}</span>
+                      <span>{money(item.forPay)}</span>
+                      <span>{money(item.commission)}</span>
+                      <span>{money(item.logistics)}</span>
+                      <span>{money(item.storage)}</span>
+                      <span>{money(item.otherDeductions)}</span>
+                      <span>{money(item.penalties)}</span>
+                    </button>
+                    {movementMode === "sizes" && expandedSize === item.label && (
+                      <div className="size-days">
+                        {(detail.bySize.find((size) => size.label === item.label)?.days ?? []).map((day) => (
+                          <div className="movement-row movement-subrow" key={`${item.label}-${day.label}`}>
+                            <span>{day.label === "Без даты" ? day.label : dateShort(day.label)}</span>
+                            <span>{money(day.revenue)}</span>
+                            <span>{day.unitsSold}</span>
+                            <span>{day.returns}</span>
+                            <span>{percent(day.buyoutRate)}</span>
+                            <span>{money(day.forPay)}</span>
+                            <span>{money(day.commission)}</span>
+                            <span>{money(day.logistics)}</span>
+                            <span>{money(day.storage)}</span>
+                            <span>{money(day.otherDeductions)}</span>
+                            <span>{money(day.penalties)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
-            </details>
+            </section>
             <details>
               <summary>Удержания WB</summary>
               <div className="small-table">

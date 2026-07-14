@@ -47,6 +47,20 @@ export type WbProductCard = {
   photoUrl: string | null;
 };
 
+export type WbPromotionSpendDay = {
+  date: string;
+  nmId: number;
+  amount: number;
+};
+
+export type WbPromotionSpendResult = {
+  rows: WbPromotionSpendDay[];
+  syncedDateFrom: string;
+  syncedDateTo: string;
+  partial: boolean;
+  warning?: string;
+};
+
 export type WbValidationResult = {
   ok: boolean;
   financeOk: boolean;
@@ -62,6 +76,7 @@ export type WbApiErrorCode =
   | "invalid_token"
   | "missing_finance_rights"
   | "missing_content_rights"
+  | "missing_promotion_rights"
   | "rate_limited"
   | "payment_required"
   | "no_reports"
@@ -83,7 +98,7 @@ export class WbApiError extends Error {
   }
 }
 
-type WbScope = "finance" | "content";
+type WbScope = "finance" | "content" | "promotion";
 
 const CONTENT_OPTIONAL_WARNING =
   "Финансы подключены, но нет доступа к карточкам товаров. Названия и изображения могут не загрузиться.";
@@ -174,6 +189,7 @@ function friendlyWbMessage(code: WbApiErrorCode) {
     invalid_token: "WB API-токен неверный или отозван.",
     missing_finance_rights: "Не хватает прав Финансы: Только чтение для финансовых отчётов.",
     missing_content_rights: "Не хватает прав Контент: Только чтение для карточек товаров.",
+    missing_promotion_rights: "Нет доступа к категории Продвижение. Рекламные расходы и ДРР пока недоступны.",
     rate_limited: "WB API временно ограничил запросы. Попробуйте позже.",
     payment_required: "WB API требует оплату или доступ к методу недоступен для этого кабинета.",
     no_reports: "Реальных финансовых отчётов за выбранный период пока нет.",
@@ -192,8 +208,12 @@ export function toUserWbError(error: unknown) {
 }
 
 function wbErrorCodeForStatus(status: number, scope: WbScope): WbApiErrorCode {
-  if (status === 401) return "invalid_token";
-  if (status === 403) return scope === "finance" ? "missing_finance_rights" : "missing_content_rights";
+  if (status === 401) return scope === "promotion" ? "missing_promotion_rights" : "invalid_token";
+  if (status === 403) {
+    if (scope === "finance") return "missing_finance_rights";
+    if (scope === "promotion") return "missing_promotion_rights";
+    return "missing_content_rights";
+  }
   if (status === 402) return "payment_required";
   if (status === 429) return "rate_limited";
   if (status >= 500) return "wb_server_error";
@@ -542,5 +562,76 @@ export class WbClient {
     }
 
     return cards;
+  }
+
+  async getPromotionSpend(dateFrom: string, dateTo: string): Promise<WbPromotionSpendResult> {
+    const campaignPayload = await this.requestJson<{
+      adverts?: Array<{
+        status?: number;
+        advert_list?: Array<{ advertId?: number }>;
+      }>;
+    }>(new URL("/adv/v1/promotion/count", config.WB_PROMOTION_API_BASE_URL), {
+      scope: "promotion"
+    });
+
+    const campaignIds = [
+      ...new Set(
+        (campaignPayload.adverts ?? [])
+          .filter((group) => [7, 9, 11].includes(Number(group.status)))
+          .flatMap((group) => group.advert_list ?? [])
+          .map((campaign) => Number(campaign.advertId))
+          .filter((id) => Number.isInteger(id) && id > 0)
+      )
+    ];
+
+    if (campaignIds.length === 0) {
+      return { rows: [], syncedDateFrom: dateFrom, syncedDateTo: dateTo, partial: false };
+    }
+
+    const requestFrom = new Date(`${dateFrom}T00:00:00.000Z`);
+    const requestTo = new Date(`${dateTo}T00:00:00.000Z`);
+    const maxFrom = new Date(requestTo);
+    maxFrom.setUTCDate(maxFrom.getUTCDate() - 30);
+    const effectiveFrom = requestFrom < maxFrom ? isoDate(maxFrom) : dateFrom;
+    const requestedCampaignIds = campaignIds.slice(0, 50);
+    const partial = effectiveFrom !== dateFrom || requestedCampaignIds.length !== campaignIds.length;
+
+    const url = new URL("/adv/v3/fullstats", config.WB_PROMOTION_API_BASE_URL);
+    url.searchParams.set("ids", requestedCampaignIds.join(","));
+    url.searchParams.set("beginDate", effectiveFrom);
+    url.searchParams.set("endDate", dateTo);
+    const stats = await this.requestJson<Array<Record<string, unknown>>>(url, { scope: "promotion" });
+    const totals = new Map<string, WbPromotionSpendDay>();
+
+    for (const campaign of Array.isArray(stats) ? stats : []) {
+      const days = Array.isArray(campaign.days) ? (campaign.days as Array<Record<string, unknown>>) : [];
+      for (const day of days) {
+        const date = getString(day, ["date"])?.slice(0, 10);
+        if (!date) continue;
+        const apps = Array.isArray(day.apps) ? (day.apps as Array<Record<string, unknown>>) : [];
+        for (const app of apps) {
+          const nms = Array.isArray(app.nms) ? (app.nms as Array<Record<string, unknown>>) : [];
+          for (const item of nms) {
+            const nmId = getNumber(item, ["nmId", "nmID", "nm_id"]);
+            const amount = getNumber(item, ["sum"]);
+            if (!Number.isInteger(nmId) || nmId <= 0 || amount === 0) continue;
+            const key = `${date}:${nmId}`;
+            const current = totals.get(key) ?? { date, nmId, amount: 0 };
+            current.amount += amount;
+            totals.set(key, current);
+          }
+        }
+      }
+    }
+
+    return {
+      rows: [...totals.values()].map((row) => ({ ...row, amount: Math.round(row.amount * 100) / 100 })),
+      syncedDateFrom: effectiveFrom,
+      syncedDateTo: dateTo,
+      partial,
+      warning: partial
+        ? "ДРР рассчитан частично: WB отдаёт не более 31 дня и 50 кампаний за один запрос."
+        : undefined
+    };
   }
 }

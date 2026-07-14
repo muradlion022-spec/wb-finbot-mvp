@@ -18,6 +18,7 @@
     "db:push:prod": "prisma db push",
     "db:migrate:deploy": "prisma migrate deploy",
     "smoke:cost-history": "node --import tsx scripts/smoke-cost-history.ts",
+    "smoke:promotion": "node --import tsx scripts/smoke-promotion.ts",
     "prisma:generate:local": "prisma generate --schema prisma/schema.sqlite.prisma"
   },
   "dependencies": {

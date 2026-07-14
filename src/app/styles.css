@@ -420,6 +420,12 @@ button:disabled {
   align-items: center;
   padding: 10px;
   text-align: left;
+  cursor: pointer;
+}
+
+.product-row:focus-visible {
+  outline: 2px solid #315c55;
+  outline-offset: 2px;
 }
 
 .product-image {
@@ -476,6 +482,28 @@ button:disabled {
   font-size: 12px;
 }
 
+.article-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 12px;
+  margin-top: 4px;
+  color: #475467;
+  font-size: 12px;
+}
+
+.article-metrics span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  overflow-wrap: anywhere;
+}
+
+.article-metrics b {
+  color: #667085;
+  font-size: 10px;
+  font-weight: 600;
+}
+
 .product-profit {
   display: grid;
   justify-items: end;
@@ -486,6 +514,17 @@ button:disabled {
 .product-profit span {
   color: #667085;
   font-size: 12px;
+}
+
+.copy-button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #dfe1da;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #475467;
+  display: grid;
+  place-items: center;
 }
 
 .badge {
@@ -650,6 +689,10 @@ select {
   padding: 8px 14px;
 }
 
+.detail-copy {
+  margin-left: auto;
+}
+
 .detail-content {
   width: min(100%, 760px);
   margin: 0 auto;
@@ -691,6 +734,72 @@ summary {
   gap: 0;
   padding-bottom: 12px;
   overflow-x: auto;
+}
+
+.movement-panel {
+  min-width: 0;
+  padding: 10px;
+}
+
+.segmented-control {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid #d6d8d2;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.segmented-control button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  color: #475467;
+}
+
+.segmented-control button.active {
+  background: #315c55;
+  color: #ffffff;
+}
+
+.movement-table {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.movement-head,
+.movement-row {
+  width: 100%;
+  min-width: 1080px;
+  display: grid;
+  grid-template-columns: 92px 118px 48px 54px 76px repeat(6, 106px);
+  gap: 8px;
+  align-items: center;
+  border: 0;
+  border-top: 1px solid #eef0eb;
+  background: #ffffff;
+  color: #2f3337;
+  padding: 9px 6px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.movement-head {
+  border-top: 0;
+  color: #667085;
+  font-weight: 700;
+}
+
+.movement-row:hover {
+  background: #f7f8f6;
+}
+
+.movement-subrow {
+  padding-left: 20px;
+  background: #fafbf9;
+  color: #475467;
 }
 
 .small-table > div,
@@ -753,6 +862,10 @@ summary {
 
   .product-row {
     grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .article-metrics {
+    grid-template-columns: 1fr;
   }
 
   .product-image {

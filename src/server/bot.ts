@@ -162,11 +162,13 @@ function renderSummary(summary: Awaited<ReturnType<typeof calculateReportSummary
     "",
     `Продажи: ${formatMoney(summary.revenue)}`,
     `К перечислению за товар: ${formatMoney(summary.goodsForPay)}`,
-    `Комиссия WB: ${formatMoney(summary.wbCommission)}`,
-    `Логистика: ${formatMoney(summary.logistics)}`,
+    `Комиссия / вознаграждение WB: ${formatMoney(summary.wbCommission)} · ${formatPercent(summary.commissionRate)}`,
+    `Все удержания WB: ${formatMoney(summary.wbCommission + summary.wbExpenses)} · ${formatPercent(summary.wbDeductionsRate)}`,
+    `Логистика: ${formatMoney(summary.logistics)} · ${summary.logisticsPerUnit === null ? "нет данных" : `${formatMoney(summary.logisticsPerUnit)}/шт.`}`,
     `Хранение: ${formatMoney(summary.storage)}`,
     `Прочие удержания: ${formatMoney(summary.otherDeductions)}`,
     `Штрафы: ${formatMoney(summary.penalties)}`,
+    `Продвижение: ${summary.adSpend === null ? "нет доступа" : `${formatMoney(summary.adSpend)} · ДРР ${formatPercent(summary.drr)}`}`,
     `Итого к оплате: ${formatMoney(summary.forPay)}`,
     `Себестоимость продаж: ${formatMoney(summary.productCost)}`,
     `Операционные расходы: ${formatMoney(summary.operatingExpenses)}`,
@@ -351,7 +353,7 @@ export function createBot() {
   bot.hears("Мои отчёты", async (context) => {
     const account = await accountFromContext(context);
     if (!config.USE_DEMO_DATA && (!account.encryptedApiToken || account.tokenStatus !== "valid")) {
-      await context.reply("Сначала нажми “Подключить WB API” и вставь персональный WB-токен с категорией Финансы и уровнем Только чтение. Контент для карточек товаров — опционально.");
+      await context.reply("Сначала нажми “Подключить WB API” и вставь персональный WB-токен с категорией Финансы и уровнем Только чтение. Контент и Продвижение — опционально.");
       return;
     }
 
@@ -390,6 +392,7 @@ export function createBot() {
         "2. Персональный токен.",
         "3. Обязательно: категория Финансы, уровень Только чтение.",
         "4. Опционально: категория Контент, Только чтение — для названий, брендов и изображений товаров.",
+        "5. Опционально: категория Продвижение, Только чтение — для рекламных расходов и ДРР.",
         "",
         "Базовый токен и тестовый токен сейчас не используйте."
       ].join("\n")
