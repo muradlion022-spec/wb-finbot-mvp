@@ -1,0 +1,1 @@
+ALTER TABLE "WbAccount" ADD COLUMN "taxMode" TEXT NOT NULL DEFAULT 'none';
