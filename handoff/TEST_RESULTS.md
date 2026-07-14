@@ -3,12 +3,13 @@
 ## Production verification — 2026-07-14
 
 Existing Vercel project `wb-finbot-mvp` was updated without creating a second project,
-database or bot. Deployment `dpl_H83pngTKr1ZjXD6yTXVW3Y8H8J9p` is `READY`, and the
-existing alias `https://wb-finbot-mvp.vercel.app` reports version `5f166b9a650d`.
+database or bot. The GitHub-triggered deployment `dpl_8CEjwuEea5Hi3UDWESp6fu4FsXX3`
+is `READY`, and the existing alias `https://wb-finbot-mvp.vercel.app` reports version
+`485d65f1c23f`.
 
 | Check | Actual result |
 | --- | --- |
-| `GET /api/health` | HTTP 200, `ok=true`, version `5f166b9a650d` |
+| `GET /api/health` | HTTP 200, `ok=true`, version `485d65f1c23f` |
 | `GET /api/account` without initData | HTTP 401, Telegram authorization required |
 | `OPTIONS /api/account` | HTTP 204; allows `Content-Type,X-Telegram-Init-Data,X-WB-Finbot-Session,X-Request-Id` |
 | Production JS asset | No `localhost`, `127.0.0.1` or `Failed to fetch` |
@@ -38,10 +39,12 @@ Production summary for report `772198476`:
 The zero tax/COGS values match persisted settings: `taxMode=none` and all 28 report
 products currently have no cost. No token, initData or Telegram user ID was printed.
 
-GitHub publication is the remaining infrastructure limitation. GitHub `main` is still
-at `bc99e9a2389ca2543e1d2ef42e27c8fde0808900`: connector write returned `403 Resource
-not accessible by integration`, local HTTPS Git has no credentials, and `gh` is not
-installed. No force push or repository history rewrite was attempted.
+GitHub publication completed through official GitHub CLI OAuth. Remote `main` advanced
+from `bc99e9a2389ca2543e1d2ef42e27c8fde0808900` to
+`485d65f1c23f0870d351d14846e8a220c2b661d5` by a normal fast-forward push. Eight differing
+files were published; the other 49 tracked files were byte-identical. No force push or
+repository history rewrite was used. The automatic Vercel deployment became `READY`,
+and the authenticated Telegram/WB report checks were repeated on version `485d65f1c23f`.
 
 ## Finance reconciliation update — 2026-07-14
 

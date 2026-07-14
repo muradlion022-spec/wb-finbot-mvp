@@ -3,16 +3,16 @@
 ## Safe state
 
 - Local working folder: `/Users/levonstepanian/Desktop/Codex/WB Финбот MVP`
-- Deployed source commit: `5f166b9` (`docs: save finance deployment checkpoint`)
+- GitHub production commit: `485d65f` (`fix: reconcile WB report totals and tax metrics`)
 - Product code commit: `ce19079` (`fix: reconcile WB commission and service expenses`)
 - Previous rollback tag: `pre-finance-fix-2026-07-14`
 - Existing Vercel project: `wb-finbot-mvp`
 - Existing production domain: `https://wb-finbot-mvp.vercel.app`
-- Production deployment: `dpl_H83pngTKr1ZjXD6yTXVW3Y8H8J9p`
-- Production version from `/api/health`: `5f166b9a650d`
+- Production deployment: `dpl_8CEjwuEea5Hi3UDWESp6fu4FsXX3`
+- Production version from `/api/health`: `485d65f1c23f`
 - GitHub repository: `https://github.com/muradlion022-spec/wb-finbot-mvp`
-- GitHub `main` is still at `bc99e9a2389ca2543e1d2ef42e27c8fde0808900` because the
-  current GitHub integration has read-only permissions and local HTTPS credentials are absent.
+- GitHub `main` is synchronized at `485d65f1c23f0870d351d14846e8a220c2b661d5` through a
+  normal fast-forward push from previous remote commit `bc99e9a`; force push was not used.
 - No force push, database reset, token replacement or production deletion was performed.
 
 ## Completed
@@ -39,15 +39,15 @@
 - Report `772198476` is `ready` in production with the confirmed totals above.
 - Report `777875626` opened successfully; reopening it used the saved database state
   instead of repeating the initial WB load.
+- The GitHub-triggered production deployment is `READY` and owns the existing aliases.
+- The post-deploy signed Telegram check reconfirmed token status `valid`, all 26 reports
+  and the exact report `772198476` totals.
 
 ## Resume from here
 
-1. Restore authenticated GitHub write access, then copy the current source into the
-   existing repository history and push a normal fast-forward commit. Do not force push.
-2. Verify that the GitHub commit contains the same product files as local commit
-   `ce19079`; a GitHub-triggered Vercel deployment must pass health checks before it
-   replaces the current deployment.
-3. In Telegram, visually open `/status`, report `772198476` and report `777875626`.
-4. Enter product costs and choose a tax mode if non-zero COGS, tax, net profit and ROI
+1. In Telegram, visually open `/status`, report `772198476` and report `777875626`.
+2. Enter product costs and choose a tax mode if non-zero COGS, tax, net profit and ROI
    are required. The current account has `taxMode=none` and all 28 products in report
    `772198476` are missing cost, so tax is `0` and ROI is intentionally unavailable.
+3. Open additional not-yet-loaded reports one at a time. Do not mass-refresh all reports,
+   because the official WB API enforces cooldown and rate limits.
