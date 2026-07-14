@@ -1,0 +1,82 @@
+# Change manifest for the 2026-07-11 production audit fixes
+#
+# The worktree already contained uncommitted security/auth changes before this task.
+# This manifest lists the production-audit additions and their behavioral intent,
+# rather than claiming that the whole current git diff was created in this run.
+
+diff --git a/.env.example b/.env.example
+@@
+-VITE_API_BASE_URL="http://localhost:3000"
++VITE_API_BASE_URL=
+
+diff --git a/vite.config.ts b/vite.config.ts
+@@
++Production ignores local .env API overrides, uses relative /api in the frontend,
++and rejects an explicitly supplied localhost/127.0.0.1 VITE_API_BASE_URL.
+
+diff --git a/index.html b/index.html
+@@
++Telegram WebApp script moved to <head> before the Vite module script.
+
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+diff --git a/prisma/schema.sqlite.prisma b/prisma/schema.sqlite.prisma
+@@
++WbAccount.reportsSyncedAt and reportsSyncError.
++FinancialReport.detailsSyncedAt, lastRrdId, syncStatus,
++contentEnrichmentStatus and contentEnrichmentError.
++WbSyncState with unique [wbAccountId, endpointType].
+
+diff --git a/prisma/migrations/20260711090000_sync_protection/migration.sql b/prisma/migrations/20260711090000_sync_protection/migration.sql
+@@
++PostgreSQL migration for sync metadata and DB-backed account/endpoint lock state.
+
+diff --git a/src/server/sync.ts b/src/server/sync.ts
+@@
++65-second cooldown, stale-lock TTL, acquire/complete/fail helpers for
++sales-reports-list, sales-reports-detailed and content-cards.
+
+diff --git a/src/server/wbClient.ts b/src/server/wbClient.ts
+@@
++Finance-only validateToken; Content is a warning.
++Removed report validation and retry/sleep loops.
++Detailed endpoints return exactly one page up to 100000 rows with partial/lastRrdId.
++List fallback retrieves one by-period page and exposes rows for reportId grouping.
+
+diff --git a/src/server/reports.ts b/src/server/reports.ts
+@@
++Database cache for GET reports, 429 fallback to saved reports, sync states,
++single-page report loading, partial report metadata, and separate optional
++Content enrichment endpoint. Finance import no longer awaits Content.
+
+diff --git a/src/server/routes.ts b/src/server/routes.ts
+@@
++Health version/build timestamp; request ID and safe structured error responses.
++Zod=400, Telegram=401, ownership=404 and WB status mapping.
++GET reports returns sync metadata; summary/refresh handle queued/loading;
++POST /api/reports/:id/enrich-products is optional and non-destructive.
+
+diff --git a/src/app/api.ts b/src/app/api.ts
+diff --git a/src/app/App.tsx b/src/app/App.tsx
+@@
++Relative production API base, typed ApiError categories, health→account startup,
++retry connection action, cooldown UI, optional enrichment trigger and build version.
+
+diff --git a/src/server/bot.ts b/src/server/bot.ts
+diff --git a/src/server/wbToken.ts b/src/server/wbToken.ts
+@@
++Finance-only instructions and Content warning; no Analytics requirement.
++Bot returns cached/cooldown/partial messages instead of generic report errors.
+
+diff --git a/scripts/migrate-demo-account.ts b/scripts/migrate-demo-account.ts
+diff --git a/scripts/smoke-normalizer.ts b/scripts/smoke-normalizer.ts
+diff --git a/scripts/smoke-wb-sync-safety.ts b/scripts/smoke-wb-sync-safety.ts
+@@
++Explicit dry-run migration of local-demo-account.
++CamelCase/snake_case normalizer fixture coverage.
++Isolated WB stub coverage for Finance-only, optional Content, cooldown, 429,
++single detailed page, ownership, Zod and safe internal error.
+
+diff --git a/README.md b/README.md
+diff --git a/handoff/TEST_RESULTS.md b/handoff/TEST_RESULTS.md
+@@
++Updated user instructions, production environment rules and factual test output.

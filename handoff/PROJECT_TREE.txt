@@ -1,0 +1,68 @@
+WB Финбот MVP
+├── api
+│   ├── [[...route]].ts
+│   ├── expenses/[...route].ts
+│   ├── products/[...route].ts
+│   ├── reports/[...route].ts
+│   ├── telegram/webhook.ts
+│   └── wb/[...route].ts
+├── handoff
+│   ├── CODEX_CHANGES.diff
+│   ├── PROJECT_TREE.txt
+│   ├── REPORT_FOR_CHATGPT.md
+│   └── TEST_RESULTS.md
+├── prisma
+│   ├── migrations
+│   │   ├── 20260630000000_init/migration.sql
+│   │   ├── 20260630190000_wb_token_metadata/migration.sql
+│   │   └── 20260711090000_sync_protection/migration.sql
+│   ├── schema.prisma
+│   ├── schema.sqlite.prisma
+│   └── seed.ts
+├── scripts
+│   ├── configure-bot.command
+│   ├── delete-telegram-webhook.command
+│   ├── dev.mjs
+│   ├── fixtures/wb-finance-camelcase.json
+│   ├── migrate-demo-account.ts
+│   ├── set-telegram-webhook.command
+│   ├── smoke-normalizer.ts
+│   ├── smoke-telegram-auth.ts
+│   ├── smoke-wb-sync-safety.ts
+│   └── start-local.command
+├── src
+│   ├── app
+│   │   ├── App.tsx
+│   │   ├── api.ts
+│   │   ├── importReport.ts
+│   │   ├── main.tsx
+│   │   ├── styles.css
+│   │   └── vite-env.d.ts
+│   ├── server
+│   │   ├── bot.ts
+│   │   ├── calculations.ts
+│   │   ├── config.ts
+│   │   ├── crypto.ts
+│   │   ├── csv.ts
+│   │   ├── db.ts
+│   │   ├── defaults.ts
+│   │   ├── demo.ts
+│   │   ├── index.ts
+│   │   ├── normalizer.ts
+│   │   ├── reports.ts
+│   │   ├── routes.ts
+│   │   ├── sync.ts
+│   │   ├── telegramAuth.ts
+│   │   ├── wbClient.ts
+│   │   └── wbToken.ts
+│   └── shared/types.ts
+├── .env.example
+├── .gitignore
+├── README.md
+├── index.html
+├── package.json
+├── pnpm-lock.yaml
+├── pnpm-workspace.yaml
+├── tsconfig.json
+├── vercel.json
+└── vite.config.ts
