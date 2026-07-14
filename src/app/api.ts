@@ -18,6 +18,28 @@ export type PendingReportResponse = {
 
 export type SummaryResponse = (ReportSummary & { sync?: SyncInfo }) | PendingReportResponse;
 
+export type ProductDetailResponse = {
+  product: import("../shared/types.js").ProductReportItem;
+  bySize: Array<{ size: string; units: number; forPay: number; profitHint: number }>;
+  lines: Array<{
+    id: string;
+    operationDate: string | null;
+    operationType: string | null;
+    barcode: string | null;
+    size: string | null;
+    quantity: number;
+    retailAmount: number;
+    forPay: number;
+    commission: number;
+    deliveryService: number;
+    storageFee: number;
+    acceptanceFee: number;
+    penalty: number;
+    deduction: number;
+    additionalPayment: number;
+  }>;
+};
+
 type ErrorPayload = { error?: string; code?: string; requestId?: string };
 
 export class ApiError extends Error {
@@ -100,6 +122,11 @@ export const api = {
   importReport: (payload: ReportImportPayload) =>
     request<{ summary: ReportSummary }>("/api/reports/import", { method: "POST", body: JSON.stringify(payload) }),
   summary: (reportId: string) => request<SummaryResponse>(`/api/reports/${reportId}/summary`),
+  combinedSummary: (reportIds: string[]) =>
+    request<SummaryResponse>("/api/reports/combined-summary", {
+      method: "POST",
+      body: JSON.stringify({ reportIds })
+    }),
   refreshReport: (reportId: string) =>
     request<{ summary: ReportSummary; sync: SyncInfo } | PendingReportResponse>(`/api/reports/${reportId}/refresh`, { method: "POST" }),
   enrichProducts: (reportId: string) =>
@@ -108,27 +135,12 @@ export const api = {
       { method: "POST" }
     ),
   productDetail: (reportId: string, nmId: number) =>
-    request<{
-      product: import("../shared/types.js").ProductReportItem;
-      bySize: Array<{ size: string; units: number; forPay: number; profitHint: number }>;
-      lines: Array<{
-        id: string;
-        operationDate: string | null;
-        operationType: string | null;
-        barcode: string | null;
-        size: string | null;
-        quantity: number;
-        retailAmount: number;
-        forPay: number;
-        commission: number;
-        deliveryService: number;
-        storageFee: number;
-        acceptanceFee: number;
-        penalty: number;
-        deduction: number;
-        additionalPayment: number;
-      }>;
-    }>(`/api/reports/${reportId}/products/${nmId}`),
+    request<ProductDetailResponse>(`/api/reports/${reportId}/products/${nmId}`),
+  combinedProductDetail: (reportIds: string[], nmId: number) =>
+    request<ProductDetailResponse>(`/api/reports/combined/products/${nmId}`, {
+      method: "POST",
+      body: JSON.stringify({ reportIds })
+    }),
   saveCost: (productId: string, payload: ProductCostInput) =>
     request<{ cost: unknown }>(`/api/products/${productId}/cost`, { method: "PUT", body: JSON.stringify(payload) }),
   expenses: () =>

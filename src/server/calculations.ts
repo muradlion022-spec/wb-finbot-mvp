@@ -6,6 +6,7 @@ import type {
 } from "../shared/types.js";
 import { prisma } from "./db.js";
 import { saleQuantityFromReportRow } from "./normalizer.js";
+import { productCostAt, totalProductUnitCost } from "./productCosts.js";
 import type { WbReportTotals } from "./wbClient.js";
 
 type Expense = {
@@ -296,9 +297,18 @@ function buildDeductions(lines: Array<{
 }
 
 export async function calculateReportSummary(reportId: string, accountId?: string): Promise<ReportSummary> {
-  const report = await prisma.financialReport.findFirst({
+  return calculateCombinedReportSummary([reportId], accountId);
+}
+
+export async function calculateCombinedReportSummary(reportIds: string[], accountId?: string): Promise<ReportSummary> {
+  const uniqueReportIds = [...new Set(reportIds)];
+  if (uniqueReportIds.length === 0 || uniqueReportIds.length > 10) {
+    throw new Error("Select between 1 and 10 reports.");
+  }
+
+  const foundReports = await prisma.financialReport.findMany({
     where: {
-      id: reportId,
+      id: { in: uniqueReportIds },
       ...(accountId ? { wbAccountId: accountId } : {})
     },
     include: {
@@ -312,8 +322,7 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
           product: {
             include: {
               costs: {
-                orderBy: { validFrom: "desc" },
-                take: 1
+                orderBy: { validFrom: "asc" }
               }
             }
           }
@@ -322,20 +331,31 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
     }
   });
 
-  if (!report) {
+  if (foundReports.length !== uniqueReportIds.length) {
     throw new Error("Report not found.");
   }
 
-  const productGroups = new Map<number, typeof report.lines>();
-  for (const line of report.lines) {
+  const reportsById = new Map(foundReports.map((report) => [report.id, report]));
+  const reports = uniqueReportIds.map((id) => reportsById.get(id)!);
+  const account = reports[0].wbAccount;
+  if (reports.some((report) => report.wbAccountId !== account.id)) {
+    throw new Error("Report not found.");
+  }
+  const lines = reports.flatMap((report) => report.lines);
+  const dateFrom = new Date(Math.min(...reports.map((report) => report.dateFrom.getTime())));
+  const dateTo = new Date(Math.max(...reports.map((report) => report.dateTo.getTime())));
+  const reportDateTo = new Map(reports.map((report) => [report.id, report.dateTo]));
+
+  const productGroups = new Map<number, typeof lines>();
+  for (const line of lines) {
     if (line.nmId <= 0) continue;
     const current = productGroups.get(line.nmId) ?? [];
     current.push(line);
     productGroups.set(line.nmId, current);
   }
 
-  const applicableExpenses = report.wbAccount.operatingExpenses.filter((expense) =>
-    expenseAppliesToReport(expense, report.dateFrom, report.dateTo)
+  const applicableExpenses = account.operatingExpenses.filter((expense) =>
+    expenseAppliesToReport(expense, dateFrom, dateTo)
   );
 
   const storeLevelOperatingExpenses = applicableExpenses
@@ -361,22 +381,33 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
     const storage = financials.reduce((sum, line) => sum + line.storage, 0);
     const otherDeductions = financials.reduce((sum, line) => sum + line.otherDeductions, 0);
     const penalties = financials.reduce((sum, line) => sum + line.penalties, 0);
-    const savedCost = product?.costs[0] ?? null;
-    const costBreakdown = savedCost
+    const latestCost = product?.costs.at(-1) ?? null;
+    const costBreakdown = latestCost
       ? {
-          purchaseCost: savedCost.purchaseCost,
+          purchaseCost: latestCost.purchaseCost,
           packagingCost: 0,
-          fulfillmentCost: savedCost.fulfillmentCost,
-          deliveryToWarehouseCost: savedCost.deliveryToWarehouseCost,
+          fulfillmentCost: latestCost.fulfillmentCost,
+          deliveryToWarehouseCost: latestCost.deliveryToWarehouseCost,
           markingCost: 0,
-          otherUnitCost: 0
+          otherUnitCost: 0,
+          validFrom: toIsoDate(latestCost.validFrom)
         }
       : null;
-    const totalUnitCost = costBreakdown
-      ? costBreakdown.purchaseCost + costBreakdown.fulfillmentCost + costBreakdown.deliveryToWarehouseCost
-      : null;
-    const missingCost = totalUnitCost === null || totalUnitCost <= 0;
-    const productCost = missingCost ? 0 : totalUnitCost * Math.max(0, unitsSold - returns);
+    const totalUnitCost = latestCost ? totalProductUnitCost(latestCost) : null;
+    let missingCost = false;
+    const productCost = lines.reduce((sum, line) => {
+      const quantity = correctedSaleQuantity(line);
+      if (quantity === 0) return sum;
+      const effectiveCost = productCostAt(
+        product?.costs ?? [],
+        line.operationDate ?? reportDateTo.get(line.financialReportId) ?? dateTo
+      );
+      if (!effectiveCost || totalProductUnitCost(effectiveCost) <= 0) {
+        missingCost = true;
+        return sum;
+      }
+      return sum + quantity * totalProductUnitCost(effectiveCost);
+    }, 0);
 
     return {
       product,
@@ -405,8 +436,7 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
     };
   });
 
-  const reportFinancials = report.lines.map(financialsOfLine);
-  const listTotals = storedReportTotals(report.rawJson);
+  const reportFinancials = lines.map(financialsOfLine);
   const lineRevenue = reportFinancials.reduce((sum, line) => sum + line.revenue, 0);
   const lineGoodsForPay = reportFinancials.reduce((sum, line) => sum + line.goodsForPay, 0);
   const lineLogistics = reportFinancials.reduce((sum, line) => sum + line.logistics, 0);
@@ -414,20 +444,39 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
   const lineOtherDeductions = reportFinancials.reduce((sum, line) => sum + line.otherDeductions, 0);
   const linePenalties = reportFinancials.reduce((sum, line) => sum + line.penalties, 0);
 
-  const totalRevenue = listTotals?.retailAmountSum ?? lineRevenue;
-  const totalGoodsForPay = listTotals?.forPaySum ?? lineGoodsForPay;
-  const totalLogistics = listTotals?.deliveryServiceSum ?? lineLogistics;
-  const totalStorage = listTotals?.paidStorageSum ?? lineStorage;
-  const totalOtherDeductions = listTotals
-    ? listTotals.paidAcceptanceSum + listTotals.deductionSum - listTotals.additionalPaymentSum
-    : lineOtherDeductions;
-  const totalPenalties = listTotals?.penaltySum ?? linePenalties;
+  const reportTotals = reports.map((report) => {
+    const financials = report.lines.map(financialsOfLine);
+    const stored = storedReportTotals(report.rawJson);
+    const revenue = financials.reduce((sum, line) => sum + line.revenue, 0);
+    const goodsForPay = financials.reduce((sum, line) => sum + line.goodsForPay, 0);
+    const logistics = financials.reduce((sum, line) => sum + line.logistics, 0);
+    const storage = financials.reduce((sum, line) => sum + line.storage, 0);
+    const otherDeductions = financials.reduce((sum, line) => sum + line.otherDeductions, 0);
+    const penalties = financials.reduce((sum, line) => sum + line.penalties, 0);
+    return {
+      revenue: stored?.retailAmountSum ?? revenue,
+      goodsForPay: stored?.forPaySum ?? goodsForPay,
+      logistics: stored?.deliveryServiceSum ?? logistics,
+      storage: stored?.paidStorageSum ?? storage,
+      otherDeductions: stored
+        ? stored.paidAcceptanceSum + stored.deductionSum - stored.additionalPaymentSum
+        : otherDeductions,
+      penalties: stored?.penaltySum ?? penalties,
+      forPay: stored?.bankPaymentSum ?? goodsForPay - logistics - storage - otherDeductions - penalties
+    };
+  });
+  const totalRevenue = reportTotals.reduce((sum, total) => sum + total.revenue, 0);
+  const totalGoodsForPay = reportTotals.reduce((sum, total) => sum + total.goodsForPay, 0);
+  const totalLogistics = reportTotals.reduce((sum, total) => sum + total.logistics, 0);
+  const totalStorage = reportTotals.reduce((sum, total) => sum + total.storage, 0);
+  const totalOtherDeductions = reportTotals.reduce((sum, total) => sum + total.otherDeductions, 0);
+  const totalPenalties = reportTotals.reduce((sum, total) => sum + total.penalties, 0);
   const totalWbCommission = totalRevenue - totalGoodsForPay;
   const totalWbExpenses = totalLogistics + totalStorage + totalOtherDeductions + totalPenalties;
-  const totalForPay = listTotals?.bankPaymentSum ?? totalGoodsForPay - totalWbExpenses;
+  const totalForPay = reportTotals.reduce((sum, total) => sum + total.forPay, 0);
 
   const allocationBase = preProducts.reduce((sum, item) => sum + Math.max(0, item.revenue || item.payout), 0);
-  const sharedLineBreakdown = report.lines
+  const sharedLineBreakdown = lines
     .filter((line) => line.nmId <= 0)
     .map(financialsOfLine)
     .reduce(
@@ -484,7 +533,7 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
   const totalOperatingExpenses = storeLevelOperatingExpenses + byRevenueShareExpenses;
   const profitBeforeOperatingExpenses = totalForPay - totalProductCost;
   const profitBeforeTax = profitBeforeOperatingExpenses - totalOperatingExpenses;
-  const taxMode = normalizeTaxMode(report.wbAccount.taxMode);
+  const taxMode = normalizeTaxMode(account.taxMode);
   const tax = calculateTax(taxMode, totalRevenue, profitBeforeTax);
   const finalNetProfit = profitBeforeTax - tax;
   const margin = totalRevenue > 0 ? (finalNetProfit / totalRevenue) * 100 : null;
@@ -532,10 +581,12 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
   });
 
   const summaryWithoutInsights = {
-    id: report.id,
-    reportId: report.reportId,
-    dateFrom: toIsoDate(report.dateFrom),
-    dateTo: toIsoDate(report.dateTo),
+    id: reports.length === 1 ? reports[0].id : "combined",
+    reportId: reports.length === 1 ? reports[0].reportId : `Выбрано отчётов: ${reports.length}`,
+    reportIds: reports.map((report) => report.id),
+    reportCount: reports.length,
+    dateFrom: toIsoDate(dateFrom),
+    dateTo: toIsoDate(dateTo),
     taxMode,
     revenue: roundMoney(totalRevenue),
     goodsForPay: roundMoney(totalGoodsForPay),
@@ -561,7 +612,7 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
     storeLevelOperatingExpenses: roundMoney(storeLevelOperatingExpenses),
     allocatedOperatingExpenses: roundMoney(byRevenueShareExpenses),
     products: products.toSorted((a, b) => b.finalProfit - a.finalProfit),
-    deductions: buildDeductions(report.lines)
+    deductions: buildDeductions(lines)
   };
 
   return {
@@ -571,7 +622,11 @@ export async function calculateReportSummary(reportId: string, accountId?: strin
 }
 
 export async function getReportProductDetail(reportId: string, nmId: number, accountId?: string) {
-  const summary = await calculateReportSummary(reportId, accountId);
+  return getCombinedReportProductDetail([reportId], nmId, accountId);
+}
+
+export async function getCombinedReportProductDetail(reportIds: string[], nmId: number, accountId?: string) {
+  const summary = await calculateCombinedReportSummary(reportIds, accountId);
   const product = summary.products.find((item) => item.nmId === nmId);
 
   if (!product) {
@@ -580,7 +635,7 @@ export async function getReportProductDetail(reportId: string, nmId: number, acc
 
   const lines = await prisma.financialReportLine.findMany({
     where: {
-      financialReportId: reportId,
+      financialReportId: { in: reportIds },
       nmId
     },
     orderBy: [{ operationDate: "asc" }, { createdAt: "asc" }]

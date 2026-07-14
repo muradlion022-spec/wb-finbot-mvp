@@ -123,6 +123,14 @@ if (expiredSessionResponse.status !== 401) {
   throw new Error("Expected an expired browser Mini App session to be rejected.");
 }
 
+const expiredEntryResponse = await app.request(
+  `http://localhost/api/telegram/mini-app?session=${encodeURIComponent(createMiniAppSession(ownerId, Date.now() - 16 * 60 * 1000))}&reportId=auth-smoke-report`,
+  { redirect: "manual" }
+);
+if (expiredEntryResponse.status !== 302 || !expiredEntryResponse.headers.get("location")?.includes("reportId=auth-smoke-report")) {
+  throw new Error("Expected an old report button to redirect into the Telegram Mini App instead of showing raw JSON.");
+}
+
 const importResponse = await requestAs(ownerId, "/api/reports/import", {
   method: "POST",
   body: JSON.stringify({
@@ -152,6 +160,14 @@ if (importResponse.status !== 200 || !reportId || !productId) {
 }
 
 const foreignReport = await requestAs(otherId, `/api/reports/${reportId}/summary`);
+const foreignCombined = await requestAs(otherId, "/api/reports/combined-summary", {
+  method: "POST",
+  body: JSON.stringify({ reportIds: [reportId] })
+});
+const foreignCombinedProduct = await requestAs(otherId, "/api/reports/combined/products/123456", {
+  method: "POST",
+  body: JSON.stringify({ reportIds: [reportId] })
+});
 const foreignProduct = await requestAs(otherId, `/api/products/${productId}/cost`, {
   method: "PUT",
   body: JSON.stringify({
@@ -160,7 +176,8 @@ const foreignProduct = await requestAs(otherId, `/api/products/${productId}/cost
     fulfillmentCost: 0,
     deliveryToWarehouseCost: 0,
     markingCost: 0,
-    otherUnitCost: 0
+    otherUnitCost: 0,
+    validFrom: "2026-07-01"
   })
 });
 
@@ -185,8 +202,14 @@ const foreignExpense = await requestAs(otherId, `/api/expenses/${expense.expense
 });
 await requestAs(ownerId, `/api/expenses/${expense.expense.id}`, { method: "DELETE" });
 
-if (foreignReport.status !== 404 || foreignProduct.status !== 404 || foreignExpense.status !== 404) {
+if (
+  foreignReport.status !== 404 ||
+  foreignCombined.status !== 404 ||
+  foreignCombinedProduct.status !== 404 ||
+  foreignProduct.status !== 404 ||
+  foreignExpense.status !== 404
+) {
   throw new Error("Ownership checks did not reject a foreign account.");
 }
 
-console.log("local valid initData and short-lived Mini App session cookie: Telegram account resolved; foreign report/product/expense rejected");
+console.log("local valid initData and Mini App entry: Telegram account resolved; foreign single and combined data rejected");

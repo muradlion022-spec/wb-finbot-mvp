@@ -1,11 +1,10 @@
 import { Bot, InlineKeyboard, Keyboard, type Context } from "grammy";
-import { calculateReportSummary } from "./calculations.js";
+import { calculateCombinedReportSummary, calculateReportSummary } from "./calculations.js";
 import { config } from "./config.js";
 import { prisma } from "./db.js";
 import { bootstrapDemo } from "./demo.js";
 import { getOrCreateTelegramAccount } from "./defaults.js";
 import { ensureReportLoaded, listReports, ReportSyncPendingError, WbNotConnectedError } from "./reports.js";
-import { createMiniAppSession } from "./telegramAuth.js";
 import { toUserWbError, WbApiError } from "./wbClient.js";
 import { debugWbToken, saveAndValidateWbToken } from "./wbToken.js";
 
@@ -17,6 +16,15 @@ function formatMoney(value: number) {
 
 function formatPercent(value: number | null) {
   return value === null ? "нет данных" : `${value.toLocaleString("ru-RU")} %`;
+}
+
+function reportCountLabel(count: number) {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 14) return `${count} отчётов`;
+  if (mod10 === 1) return `${count} отчёт`;
+  if (mod10 >= 2 && mod10 <= 4) return `${count} отчёта`;
+  return `${count} отчётов`;
 }
 
 function taxLabel(mode: Awaited<ReturnType<typeof calculateReportSummary>>["taxMode"]) {
@@ -46,15 +54,10 @@ function isLocalMiniAppUrl(url: string) {
   return /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?/i.test(url);
 }
 
-function miniAppUrl(telegramId: number, params: Record<string, string> = {}) {
-  const url = isLocalMiniAppUrl(config.MINI_APP_URL)
-    ? new URL(config.MINI_APP_URL)
-    : new URL("/api/telegram/mini-app", config.MINI_APP_URL);
+function miniAppUrl(_telegramId: number, params: Record<string, string> = {}) {
+  const url = new URL(config.MINI_APP_URL);
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
-  }
-  if (!isLocalMiniAppUrl(config.MINI_APP_URL)) {
-    url.searchParams.set("session", createMiniAppSession(telegramId));
   }
   return url.toString();
 }
@@ -97,21 +100,65 @@ function reportKeyboard(reportId: string, telegramId: number) {
   return keyboard;
 }
 
-function reportListKeyboard(reports: Awaited<ReturnType<typeof listReports>>["reports"]) {
+function reportMask(value: string) {
+  const parsed = Number.parseInt(value, 36);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed < 2 ** 10 ? parsed : 0;
+}
+
+function selectedReports(
+  reports: Awaited<ReturnType<typeof listReports>>["reports"],
+  mask: number
+) {
+  return reports.slice(0, 10).filter((_, index) => (mask & (1 << index)) !== 0);
+}
+
+function reportListKeyboard(
+  reports: Awaited<ReturnType<typeof listReports>>["reports"],
+  telegramId: number,
+  mask = 0
+) {
   const keyboard = new InlineKeyboard();
-  for (const report of reports.slice(0, 8)) {
+  for (const [index, report] of reports.slice(0, 10).entries()) {
+    const checked = (mask & (1 << index)) !== 0;
     keyboard.text(
-      `${report.dateFrom.toISOString().slice(0, 10)} - ${report.dateTo.toISOString().slice(0, 10)} · ${report.reportId}`,
-      `report:${report.id}`
+      `${checked ? "✅" : "☐"} ${report.dateFrom.toISOString().slice(0, 10)} - ${report.dateTo.toISOString().slice(0, 10)} · ${report.reportId}`,
+      `toggle-report:${mask.toString(36)}:${index}`
     );
     keyboard.row();
   }
+  const count = selectedReports(reports, mask).length;
+  keyboard.text(`Посчитать выбранные (${count})`, `analyze-reports:${mask.toString(36)}`).row();
+  if (count > 0) {
+    attachMiniAppButton(
+      keyboard,
+      "Открыть выбранные в Mini App",
+      miniAppUrl(telegramId, { reportIds: selectedReports(reports, mask).map((report) => report.id).join(",") })
+    );
+  }
+  return keyboard;
+}
+
+function combinedReportKeyboard(reportIds: string[], telegramId: number) {
+  const keyboard = new InlineKeyboard();
+  attachMiniAppButton(
+    keyboard,
+    "Открыть полный отчёт",
+    miniAppUrl(telegramId, { reportIds: reportIds.join(",") })
+  );
+  keyboard.row();
+  attachMiniAppButton(
+    keyboard,
+    "Операционные расходы",
+    miniAppUrl(telegramId, { reportIds: reportIds.join(","), tab: "expenses" })
+  );
   return keyboard;
 }
 
 function renderSummary(summary: Awaited<ReturnType<typeof calculateReportSummary>>) {
   return [
-    `📊 Отчёт WB за ${summary.dateFrom} - ${summary.dateTo}`,
+    summary.reportCount > 1
+      ? `📊 Сводный отчёт WB: ${reportCountLabel(summary.reportCount)} за ${summary.dateFrom} - ${summary.dateTo}`
+      : `📊 Отчёт WB за ${summary.dateFrom} - ${summary.dateTo}`,
     "",
     `Продажи: ${formatMoney(summary.revenue)}`,
     `К перечислению за товар: ${formatMoney(summary.goodsForPay)}`,
@@ -323,7 +370,9 @@ export function createBot() {
         return;
       }
 
-      await context.reply("Выбери отчёт для разбора:", { reply_markup: reportListKeyboard(reports) });
+      await context.reply("Отметь от 1 до 10 отчётов и нажми «Посчитать выбранные»:", {
+        reply_markup: reportListKeyboard(reports, telegramUserId(context))
+      });
     } catch (error) {
       await context.reply(botErrorMessage(error));
     }
@@ -385,6 +434,48 @@ export function createBot() {
 
   bot.hears(["Себестоимость", "Операционные расходы", "Настройки"], async (context) => {
     await context.reply("Открой Mini App:", { reply_markup: appKeyboard(telegramUserId(context)) });
+  });
+
+  bot.callbackQuery(/^toggle-report:([0-9a-z]+):(\d+)$/, async (context) => {
+    const account = await accountFromContext(context);
+    const mask = reportMask(context.match[1]);
+    const index = Number(context.match[2]);
+    const reports = (await listReports({ accountId: account.id, syncWb: false })).reports.slice(0, 10);
+    if (!Number.isInteger(index) || index < 0 || index >= reports.length) {
+      await context.answerCallbackQuery({ text: "Список отчётов изменился. Откройте «Мои отчёты» заново." });
+      return;
+    }
+    const nextMask = mask ^ (1 << index);
+    await context.answerCallbackQuery();
+    await context.editMessageReplyMarkup({
+      reply_markup: reportListKeyboard(reports, telegramUserId(context), nextMask)
+    });
+  });
+
+  bot.callbackQuery(/^analyze-reports:([0-9a-z]+)$/, async (context) => {
+    const mask = reportMask(context.match[1]);
+    await acknowledgeCallback(context);
+    try {
+      const account = await accountFromContext(context);
+      const reports = (await listReports({ accountId: account.id, syncWb: false })).reports.slice(0, 10);
+      const chosen = selectedReports(reports, mask);
+      if (chosen.length === 0) {
+        await context.reply("Сначала отметьте хотя бы один отчёт.");
+        return;
+      }
+      const loadedIds: string[] = [];
+      for (const report of chosen) {
+        const loaded = await ensureReportLoaded(report.id, { accountId: account.id });
+        loadedIds.push(loaded.report.id);
+      }
+      const summary = await calculateCombinedReportSummary(loadedIds, account.id);
+      await context.reply(summaryMessage(summary), {
+        reply_markup: combinedReportKeyboard(summary.reportIds, telegramUserId(context))
+      });
+    } catch (error) {
+      logBotCallbackError("analyze-reports", error);
+      await context.reply(botErrorMessage(error));
+    }
   });
 
   bot.callbackQuery(/^report:(.+)/, async (context) => {

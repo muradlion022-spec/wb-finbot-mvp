@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
-import { calculateReportSummary, getReportProductDetail, normalizeTaxMode } from "./calculations.js";
+import {
+  calculateCombinedReportSummary,
+  calculateReportSummary,
+  getCombinedReportProductDetail,
+  getReportProductDetail,
+  normalizeTaxMode
+} from "./calculations.js";
 import { config } from "./config.js";
 import { bootstrapDemo } from "./demo.js";
 import { prisma } from "./db.js";
@@ -26,6 +32,7 @@ import {
 import { toUserWbError, WbApiError } from "./wbClient.js";
 import { getBot } from "./bot.js";
 import { saveAndValidateWbToken } from "./wbToken.js";
+import { saveProductCostVersion } from "./productCosts.js";
 
 type ApiVariables = {
   requestId: string;
@@ -42,7 +49,13 @@ const productCostSchema = z.object({
   fulfillmentCost: moneySchema,
   deliveryToWarehouseCost: moneySchema,
   markingCost: moneySchema,
-  otherUnitCost: moneySchema
+  otherUnitCost: moneySchema,
+  validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+});
+const combinedReportsSchema = z.object({
+  reportIds: z.array(z.string().trim().min(1)).min(1).max(10)
+}).refine(({ reportIds }) => new Set(reportIds).size === reportIds.length, {
+  message: "Отчёты не должны повторяться."
 });
 const operatingExpenseSchema = z.object({
   title: z.string().trim().min(1),
@@ -172,8 +185,6 @@ app.post("/api/telegram/webhook", async (context) => {
 
 app.get("/api/telegram/mini-app", async (context) => {
   const session = context.req.query("session") || "";
-  validateMiniAppSession(session);
-
   const redirectUrl = new URL(config.MINI_APP_URL);
   const reportId = context.req.query("reportId");
   const tab = context.req.query("tab");
@@ -184,10 +195,17 @@ app.get("/api/telegram/mini-app", async (context) => {
     redirectUrl.searchParams.set("tab", tab);
   }
 
-  context.header(
-    "Set-Cookie",
-    `${MINI_APP_SESSION_COOKIE}=${session}; Max-Age=${MINI_APP_SESSION_TTL_SECONDS}; Path=/; HttpOnly; Secure; SameSite=Lax`
-  );
+  try {
+    validateMiniAppSession(session);
+    context.header(
+      "Set-Cookie",
+      `${MINI_APP_SESSION_COOKIE}=${session}; Max-Age=${MINI_APP_SESSION_TTL_SECONDS}; Path=/; HttpOnly; Secure; SameSite=Lax`
+    );
+  } catch (error) {
+    if (!(error instanceof TelegramAuthError)) throw error;
+    // Old Telegram messages can contain an expired bridge link. Redirect to the
+    // Mini App so Telegram WebApp initData can authorize the user normally.
+  }
   context.header("Cache-Control", "no-store");
   return context.redirect(redirectUrl.toString(), 302);
 });
@@ -253,6 +271,44 @@ app.get("/api/reports/:id/summary", async (context) => {
   }
 });
 
+app.post("/api/reports/combined-summary", async (context) => {
+  const account = await getCurrentAccount(context);
+  const { reportIds } = combinedReportsSchema.parse(await context.req.json());
+  const loadedIds: string[] = [];
+  let retryAfterSeconds = 0;
+
+  try {
+    for (const reportId of reportIds) {
+      const loaded = await ensureReportLoaded(reportId, { accountId: account.id });
+      loadedIds.push(loaded.report.id);
+      retryAfterSeconds = Math.max(retryAfterSeconds, loaded.sync.retryAfterSeconds);
+    }
+  } catch (error) {
+    if (error instanceof ReportSyncPendingError) {
+      return context.json(
+        {
+          syncStatus: error.syncStatus,
+          retryAfterSeconds: error.retryAfterSeconds,
+          message: error.message,
+          requestId: context.get("requestId")
+        },
+        202
+      );
+    }
+    throw error;
+  }
+
+  const summary = await calculateCombinedReportSummary(loadedIds, account.id);
+  return context.json({
+    ...summary,
+    sync: {
+      status: "ready",
+      cacheHit: true,
+      retryAfterSeconds
+    }
+  });
+});
+
 app.post("/api/reports/:id/refresh", async (context) => {
   const account = await getCurrentAccount(context);
   try {
@@ -280,6 +336,19 @@ app.post("/api/reports/:id/enrich-products", async (context) => {
   return context.json(await enrichReportProducts(context.req.param("id"), account.id));
 });
 
+app.post("/api/reports/combined/products/:nmId", async (context) => {
+  const account = await getCurrentAccount(context);
+  const nmId = Number(context.req.param("nmId"));
+  if (!Number.isFinite(nmId)) return responseError(context, 400, "Некорректный nmId.", "invalid_nm_id");
+  const { reportIds } = combinedReportsSchema.parse(await context.req.json());
+  const loadedIds: string[] = [];
+  for (const reportId of reportIds) {
+    const loaded = await ensureReportLoaded(reportId, { accountId: account.id });
+    loadedIds.push(loaded.report.id);
+  }
+  return context.json(await getCombinedReportProductDetail(loadedIds, nmId, account.id));
+});
+
 app.get("/api/reports/:id/products/:nmId", async (context) => {
   const account = await getCurrentAccount(context);
   const nmId = Number(context.req.param("nmId"));
@@ -292,18 +361,8 @@ app.put("/api/products/:id/cost", async (context) => {
   const account = await getCurrentAccount(context);
   const productId = context.req.param("id");
   const body = productCostSchema.parse(await context.req.json());
-  const savedCost = {
-    ...body,
-    packagingCost: 0,
-    markingCost: 0,
-    otherUnitCost: 0
-  };
-  const totalUnitCost =
-    savedCost.purchaseCost + savedCost.fulfillmentCost + savedCost.deliveryToWarehouseCost;
-  const product = await prisma.product.findFirst({ where: { id: productId, wbAccountId: account.id }, select: { id: true } });
-  if (!product) return responseError(context, 404, "Товар не найден.", "product_not_found");
-  await prisma.productCost.updateMany({ where: { productId, validTo: null }, data: { validTo: new Date() } });
-  const cost = await prisma.productCost.create({ data: { productId, ...savedCost, totalUnitCost, validFrom: new Date() } });
+  const cost = await saveProductCostVersion(productId, account.id, body);
+  if (!cost) return responseError(context, 404, "Товар не найден.", "product_not_found");
   return context.json({ cost });
 });
 

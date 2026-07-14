@@ -43,6 +43,7 @@ export type ProductCostInput = {
   deliveryToWarehouseCost: number;
   markingCost: number;
   otherUnitCost: number;
+  validFrom: string;
 };
 
 export type OperatingExpenseInput = {
@@ -103,6 +104,8 @@ export type DeductionsSummaryItem = {
 export type ReportSummary = MoneyBreakdown & {
   id: string;
   reportId: string;
+  reportIds: string[];
+  reportCount: number;
   dateFrom: string;
   dateTo: string;
   taxMode: TaxMode;

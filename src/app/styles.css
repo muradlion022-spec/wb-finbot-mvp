@@ -83,6 +83,80 @@ button:disabled {
   margin-bottom: 12px;
 }
 
+.report-picker {
+  position: relative;
+  min-width: 0;
+  flex: 1;
+}
+
+.report-picker > summary {
+  height: 40px;
+  border: 1px solid #d6d8d2;
+  border-radius: 8px;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+}
+
+.report-picker > summary::-webkit-details-marker {
+  display: none;
+}
+
+.report-picker > summary::after {
+  content: "⌄";
+  margin-left: auto;
+  color: #667085;
+}
+
+.report-picker-menu {
+  position: absolute;
+  z-index: 15;
+  top: 46px;
+  left: 0;
+  width: min(540px, calc(100vw - 28px));
+  max-height: min(480px, 70vh);
+  border: 1px solid #d6d8d2;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgb(31 35 40 / 14%);
+  padding: 12px;
+}
+
+.report-picker-list {
+  max-height: min(360px, 52vh);
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+.report-picker-option {
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  color: #2f3337;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.report-picker-option:hover {
+  background: #f4f6f3;
+}
+
+.report-picker-option input {
+  width: 18px;
+  min-height: 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: #1f7a4d;
+}
+
 .toolbar select,
 .controls-row select {
   min-width: 0;
@@ -509,6 +583,27 @@ select {
 .cost-actions {
   justify-content: space-between;
   margin-top: 12px;
+}
+
+.cost-effective-date {
+  grid-column: 1 / -1;
+}
+
+.date-input-wrap {
+  position: relative;
+}
+
+.date-input-wrap svg {
+  position: absolute;
+  z-index: 1;
+  left: 10px;
+  top: 12px;
+  color: #667085;
+  pointer-events: none;
+}
+
+.date-input-wrap input {
+  padding-left: 36px;
 }
 
 .expense-row,

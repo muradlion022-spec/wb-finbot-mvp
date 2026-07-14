@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Boxes,
+  CalendarDays,
   ChevronLeft,
   CircleDollarSign,
   Database,
@@ -45,7 +46,8 @@ const emptyCost: ProductCostInput = {
   fulfillmentCost: 0,
   deliveryToWarehouseCost: 0,
   markingCost: 0,
-  otherUnitCost: 0
+  otherUnitCost: 0,
+  validFrom: new Date().toISOString().slice(0, 10)
 };
 
 const expenseCategories = [
@@ -79,10 +81,20 @@ function taxMetricLabel(mode: TaxMode) {
 }
 
 function costDraftFor(product: ProductReportItem): ProductCostInput {
-  return product.costBreakdown ?? {
-    ...emptyCost,
-    purchaseCost: product.totalUnitCost ?? 0
+  return {
+    ...(product.costBreakdown ?? {
+      ...emptyCost,
+      purchaseCost: product.totalUnitCost ?? 0
+    }),
+    validFrom: new Date().toISOString().slice(0, 10)
   };
+}
+
+function reportIdsFromSearch(searchParams: URLSearchParams) {
+  const multiple = (searchParams.get("reportIds") || "").split(",").filter(Boolean);
+  if (multiple.length > 0) return multiple.slice(0, 10);
+  const single = searchParams.get("reportId");
+  return single ? [single] : [];
 }
 
 function money(value: number) {
@@ -98,6 +110,13 @@ function dateShort(value: string) {
     day: "2-digit",
     month: "2-digit"
   }).format(new Date(value));
+}
+
+function reportCountLabel(count: number) {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  const noun = mod100 >= 11 && mod100 <= 14 ? "отчётов" : mod10 === 1 ? "отчёт" : mod10 >= 2 && mod10 <= 4 ? "отчёта" : "отчётов";
+  return `${count} ${noun}`;
 }
 
 function statusLabel(status: ProductReportItem["status"]) {
@@ -201,6 +220,8 @@ function ProductImage({ product }: { product: ProductReportItem }) {
 export function App() {
   const searchParams = new URLSearchParams(window.location.search);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const reportPickerRef = useRef<HTMLDetailsElement | null>(null);
+  const initialReportIds = reportIdsFromSearch(searchParams);
   const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "dashboard");
   const [account, setAccount] = useState<{ name: string; tokenStatus: string; taxMode: TaxMode; useDemoData: boolean } | null>(
     null
@@ -208,7 +229,8 @@ export function App() {
   const [reports, setReports] = useState<
     Array<{ id: string; reportId: string; dateFrom: string; dateTo: string; totalForPay: number }>
   >([]);
-  const [selectedReportId, setSelectedReportId] = useState(searchParams.get("reportId") || "");
+  const [selectedReportIds, setSelectedReportIds] = useState<string[]>(initialReportIds);
+  const [draftReportIds, setDraftReportIds] = useState<string[]>(initialReportIds);
   const [summary, setSummary] = useState<ReportSummary | null>(null);
   const [expenses, setExpenses] = useState<Awaited<ReturnType<typeof api.expenses>>["expenses"]>([]);
   const [productFilter, setProductFilter] = useState<ProductFilter>("all");
@@ -252,11 +274,22 @@ export function App() {
     if (sync.message) setNotice(sync.message);
   }
 
-  async function refreshReport(reportId = selectedReportId) {
-    if (!reportId) {
+  function updateReportQuery(reportIds: string[]) {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("reportId");
+    url.searchParams.delete("reportIds");
+    if (reportIds.length === 1) url.searchParams.set("reportId", reportIds[0]);
+    if (reportIds.length > 1) url.searchParams.set("reportIds", reportIds.join(","));
+    window.history.replaceState({}, "", url);
+  }
+
+  async function refreshReports(reportIds = selectedReportIds) {
+    if (reportIds.length === 0) {
       return;
     }
-    const response = await api.summary(reportId);
+    const response = reportIds.length === 1
+      ? await api.summary(reportIds[0])
+      : await api.combinedSummary(reportIds);
     if ("syncStatus" in response) {
       setCooldownSeconds(Math.max(0, response.retryAfterSeconds));
       setNotice(response.message);
@@ -264,14 +297,18 @@ export function App() {
     }
     const { sync, ...nextSummary } = response;
     setSummary(nextSummary);
-    setSelectedReportId(nextSummary.id);
+    setSelectedReportIds(nextSummary.reportIds);
+    setDraftReportIds(nextSummary.reportIds);
+    updateReportQuery(nextSummary.reportIds);
     applySync(sync);
-    void api
-      .enrichProducts(nextSummary.id)
-      .then((result) => {
-        if (result.status === "failed_optional" && result.warning) setNotice(result.warning);
-      })
-      .catch(() => undefined);
+    if (nextSummary.reportIds.length === 1) {
+      void api
+        .enrichProducts(nextSummary.reportIds[0])
+        .then((result) => {
+          if (result.status === "failed_optional" && result.warning) setNotice(result.warning);
+        })
+        .catch(() => undefined);
+    }
   }
 
   async function refreshExpenses() {
@@ -290,9 +327,13 @@ export function App() {
       setReports(reportsPayload.reports);
       applySync(reportsPayload.sync);
 
-      const reportId = selectedReportId || reportsPayload.reports[0]?.id || "";
-      if (reportId) {
-        await refreshReport(reportId);
+      const availableIds = new Set(reportsPayload.reports.map((report) => report.id));
+      const requestedIds = initialReportIds.filter((id) => availableIds.has(id));
+      const reportIds = requestedIds.length > 0 ? requestedIds : reportsPayload.reports[0]?.id ? [reportsPayload.reports[0].id] : [];
+      setSelectedReportIds(reportIds);
+      setDraftReportIds(reportIds);
+      if (reportIds.length > 0) {
+        await refreshReports(reportIds);
       } else {
         setSummary(null);
       }
@@ -323,19 +364,21 @@ export function App() {
 
     setBusy(true);
     api
-      .productDetail(summary.id, selectedProduct.nmId)
+      .combinedProductDetail(selectedReportIds, selectedProduct.nmId)
       .then(setProductDetail)
       .catch((caught) => setError(readableApiError(caught)))
       .finally(() => setBusy(false));
-  }, [selectedProduct?.nmId, summary?.id]);
+  }, [selectedProduct?.nmId, selectedReportIds.join(",")]);
 
-  async function handleReportSelect(reportId: string) {
-    setSelectedReportId(reportId);
+  async function handleReportsApply(reportIds: string[]) {
+    if (reportIds.length === 0 || reportIds.length > 10) return;
+    setSelectedReportIds(reportIds);
     setSelectedProduct(null);
     setBusy(true);
     setError("");
     try {
-      await refreshReport(reportId);
+      await refreshReports(reportIds);
+      if (reportPickerRef.current) reportPickerRef.current.open = false;
     } catch (caught) {
       setError(readableApiError(caught));
     } finally {
@@ -349,7 +392,8 @@ export function App() {
     try {
       const payload = await api.resetDemo();
       setSummary(payload.summary);
-      setSelectedReportId(payload.summary.id);
+      setSelectedReportIds(payload.summary.reportIds);
+      setDraftReportIds(payload.summary.reportIds);
       const freshReports = await api.reports();
       setReports(freshReports.reports);
       await refreshExpenses();
@@ -373,7 +417,8 @@ export function App() {
       const payload = parseReportFile(file.name, text);
       const imported = await api.importReport(payload);
       setSummary(imported.summary);
-      setSelectedReportId(imported.summary.id);
+      setSelectedReportIds(imported.summary.reportIds);
+      setDraftReportIds(imported.summary.reportIds);
       const freshReports = await api.reports();
       setReports(freshReports.reports);
       setNotice("Отчёт импортирован.");
@@ -387,7 +432,7 @@ export function App() {
     }
   }
 
-  function updateCostDraft(product: ProductReportItem, key: keyof ProductCostInput, value: number) {
+  function updateCostDraft(product: ProductReportItem, key: keyof ProductCostInput, value: number | string) {
     setCostDrafts((drafts) => {
       const current =
         drafts[product.productId] ?? costDraftFor(product);
@@ -414,7 +459,12 @@ export function App() {
         markingCost: 0,
         otherUnitCost: 0
       });
-      await refreshReport();
+      setCostDrafts((drafts) => {
+        const next = { ...drafts };
+        delete next[product.productId];
+        return next;
+      });
+      await refreshReports();
       setNotice("Себестоимость сохранена.");
     } catch (caught) {
       setError(readableApiError(caught));
@@ -429,7 +479,7 @@ export function App() {
     try {
       await api.createExpense(expenseDraft);
       await refreshExpenses();
-      await refreshReport();
+      await refreshReports();
       setExpenseDraft({
         title: "",
         category: "warehouse",
@@ -453,7 +503,7 @@ export function App() {
     try {
       await api.deleteExpense(id);
       await refreshExpenses();
-      await refreshReport();
+      await refreshReports();
     } catch (caught) {
       setError(readableApiError(caught));
     } finally {
@@ -499,7 +549,7 @@ export function App() {
     try {
       const payload = await api.saveTaxMode(taxMode);
       setAccount((current) => (current ? { ...current, taxMode: payload.taxMode } : current));
-      await refreshReport();
+      await refreshReports();
       setNotice("Налоговый режим сохранён.");
     } catch (caught) {
       setError(readableApiError(caught));
@@ -547,18 +597,45 @@ export function App() {
       </header>
 
       <section className="toolbar">
-        <select
-          value={selectedReportId}
-          onChange={(event) => void handleReportSelect(event.target.value)}
-          aria-label="Отчёт"
-          disabled={reports.length === 0}
-        >
-          {reports.map((report) => (
-            <option value={report.id} key={report.id}>
-              {dateShort(report.dateFrom)} - {dateShort(report.dateTo)} · {report.reportId}
-            </option>
-          ))}
-        </select>
+        <details className="report-picker" ref={reportPickerRef}>
+          <summary>
+            {reportCountLabel(selectedReportIds.length)}
+          </summary>
+          <div className="report-picker-menu">
+            <strong>Выберите до 10 отчётов</strong>
+            <div className="report-picker-list">
+              {reports.map((report) => {
+                const checked = draftReportIds.includes(report.id);
+                return (
+                  <label className="report-picker-option" key={report.id}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!checked && draftReportIds.length >= 10}
+                      onChange={() => {
+                        setDraftReportIds((current) =>
+                          current.includes(report.id)
+                            ? current.filter((id) => id !== report.id)
+                            : [...current, report.id].slice(0, 10)
+                        );
+                      }}
+                    />
+                    <span>
+                      {dateShort(report.dateFrom)} - {dateShort(report.dateTo)} · {report.reportId}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <button
+              className="primary-button full-width"
+              disabled={draftReportIds.length === 0 || busy}
+              onClick={() => void handleReportsApply(draftReportIds)}
+            >
+              Показать выбранные ({draftReportIds.length})
+            </button>
+          </div>
+        </details>
         {account?.useDemoData && (
           <button className="tool-button" onClick={handleDemoReset} disabled={busy}>
             <Database size={18} />
@@ -826,7 +903,7 @@ function Costs({
 }: {
   products: ProductReportItem[];
   costDrafts: Record<string, ProductCostInput>;
-  onDraftChange: (product: ProductReportItem, key: keyof ProductCostInput, value: number) => void;
+  onDraftChange: (product: ProductReportItem, key: keyof ProductCostInput, value: number | string) => void;
   onSave: (product: ProductReportItem) => void;
 }) {
   const fields: Array<[keyof ProductCostInput, string]> = [
@@ -849,6 +926,9 @@ function Costs({
                 <div>
                   <strong>{product.title || product.vendorCode}</strong>
                   <span className="muted-text">{product.vendorCode}</span>
+                  {product.costBreakdown && (
+                    <span className="muted-text">Текущая цена действует с {dateShort(product.costBreakdown.validFrom)}</span>
+                  )}
                   {product.missingCost && <span className="badge badge-warning">себестоимость не указана</span>}
                 </div>
               </div>
@@ -868,6 +948,17 @@ function Costs({
                     />
                   </label>
                 ))}
+                <label className="cost-effective-date">
+                  <span>Новая цена действует с</span>
+                  <div className="date-input-wrap">
+                    <CalendarDays size={17} />
+                    <input
+                      type="date"
+                      value={draft.validFrom}
+                      onChange={(event) => onDraftChange(product, "validFrom", event.target.value)}
+                    />
+                  </div>
+                </label>
               </div>
 
               <div className="cost-actions">

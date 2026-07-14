@@ -113,7 +113,7 @@ const { prisma } = await import("../src/server/db.js");
 const { getOrCreateTelegramAccount } = await import("../src/server/defaults.js");
 const { saveAndValidateWbToken } = await import("../src/server/wbToken.js");
 const { ensureReportLoaded, enrichReportProducts, importReport, listReports } = await import("../src/server/reports.js");
-const { calculateReportSummary } = await import("../src/server/calculations.js");
+const { calculateCombinedReportSummary, calculateReportSummary } = await import("../src/server/calculations.js");
 const { WbClient } = await import("../src/server/wbClient.js");
 const { app } = await import("../src/server/routes.js");
 
@@ -247,6 +247,102 @@ try {
   assert.equal(profitTaxReferenceSummary.roi, 346.5);
   await prisma.wbAccount.update({ where: { id: account.id }, data: { taxMode: "none" } });
   console.log("WB report 772198476: sales, payout, costs, tax, margin and ROI reconciled");
+
+  const historicalFirst = await importReport(
+    {
+      reportId: "historical-cost-first",
+      dateFrom: "2026-07-08",
+      dateTo: "2026-07-14",
+      source: "wb",
+      lines: [{
+        nmId: 880077,
+        vendorCode: "HISTORY-42",
+        operationType: "Продажа",
+        operationDate: "2026-07-10",
+        quantity: 2,
+        retailAmount: 400,
+        forPay: 300
+      }]
+    },
+    { accountId: account.id, source: "wb" }
+  );
+  const historicalSecond = await importReport(
+    {
+      reportId: "historical-cost-second",
+      dateFrom: "2026-07-15",
+      dateTo: "2026-07-21",
+      source: "wb",
+      lines: [{
+        nmId: 880077,
+        vendorCode: "HISTORY-42",
+        operationType: "Продажа",
+        operationDate: "2026-07-20",
+        quantity: 2,
+        retailAmount: 400,
+        forPay: 300
+      }]
+    },
+    { accountId: account.id, source: "wb" }
+  );
+  const historicalProduct = await prisma.product.findUniqueOrThrow({
+    where: { wbAccountId_nmId: { wbAccountId: account.id, nmId: 880077 } }
+  });
+  await prisma.productCost.createMany({
+    data: [
+      {
+        productId: historicalProduct.id,
+        purchaseCost: 100,
+        totalUnitCost: 100,
+        validFrom: new Date("2026-07-01T00:00:00.000Z"),
+        validTo: new Date("2026-07-15T00:00:00.000Z")
+      },
+      {
+        productId: historicalProduct.id,
+        purchaseCost: 150,
+        totalUnitCost: 150,
+        validFrom: new Date("2026-07-15T00:00:00.000Z")
+      }
+    ]
+  });
+  await prisma.operatingExpense.create({
+    data: {
+      wbAccountId: account.id,
+      title: "Combined reports expense",
+      category: "services",
+      amount: 50,
+      expenseType: "one_time",
+      recurrenceType: "none",
+      expenseDate: new Date("2026-07-10T00:00:00.000Z"),
+      allocationMode: "store_level_only"
+    }
+  });
+  const historicalFirstSummary = await calculateReportSummary(historicalFirst.id, account.id);
+  const historicalSecondSummary = await calculateReportSummary(historicalSecond.id, account.id);
+  const historicalCombined = await calculateCombinedReportSummary([historicalFirst.id, historicalSecond.id], account.id);
+  assert.equal(historicalFirstSummary.productCost, 200);
+  assert.equal(historicalSecondSummary.productCost, 300);
+  assert.equal(historicalCombined.productCost, 500);
+  assert.equal(historicalCombined.operatingExpenses, 50);
+  assert.equal(historicalCombined.finalProfit, 50);
+  assert.equal(historicalCombined.reportCount, 2);
+  const combinedResponse = await requestAs(710001, "/api/reports/combined-summary", {
+    method: "POST",
+    body: JSON.stringify({ reportIds: [historicalFirst.id, historicalSecond.id] })
+  });
+  const combinedBody = (await combinedResponse.json()) as { productCost?: number; operatingExpenses?: number; reportCount?: number };
+  assert.equal(combinedResponse.status, 200);
+  assert.equal(combinedBody.productCost, 500);
+  assert.equal(combinedBody.operatingExpenses, 50);
+  assert.equal(combinedBody.reportCount, 2);
+  const combinedProductResponse = await requestAs(710001, "/api/reports/combined/products/880077", {
+    method: "POST",
+    body: JSON.stringify({ reportIds: [historicalFirst.id, historicalSecond.id] })
+  });
+  const combinedProductBody = (await combinedProductResponse.json()) as { product?: { productCost?: number }; lines?: unknown[] };
+  assert.equal(combinedProductResponse.status, 200);
+  assert.equal(combinedProductBody.product?.productCost, 500);
+  assert.equal(combinedProductBody.lines?.length, 2);
+  console.log("historical costs and combined reports: dated prices applied and operating expense counted once");
 
   await prisma.wbAccount.update({ where: { id: account.id }, data: { reportsSyncedAt: new Date(Date.now() - 70_000) } });
   await prisma.wbSyncState.update({
