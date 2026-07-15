@@ -575,6 +575,11 @@ export function startBot() {
     return undefined;
   }
 
+  if (!config.TELEGRAM_POLLING_ENABLED) {
+    console.log("Telegram polling is disabled. Production bot continues through webhook.");
+    return undefined;
+  }
+
   bot.start({
     onStart: () => console.log("Telegram bot started in polling mode.")
   });

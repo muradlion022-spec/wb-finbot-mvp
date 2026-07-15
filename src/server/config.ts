@@ -10,6 +10,11 @@ const envSchema = z.object({
   NODE_ENV: z.string().optional().default("development"),
   PUBLIC_API_URL: z.string().url().optional().default("http://localhost:3000"),
   TELEGRAM_WEBHOOK_SECRET: z.string().optional().default(""),
+  TELEGRAM_POLLING_ENABLED: z
+    .string()
+    .optional()
+    .default("false")
+    .transform((value) => value.toLowerCase() === "true"),
   TELEGRAM_AUTH_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(86_400),
   WB_API_BASE_URL: z.string().url().default("https://statistics-api.wildberries.ru"),
   WB_FINANCE_API_BASE_URL: z.string().url().default("https://finance-api.wildberries.ru"),
