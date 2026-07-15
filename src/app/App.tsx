@@ -1,4 +1,6 @@
 import {
+  BadgePercent,
+  Banknote,
   BarChart3,
   Boxes,
   CalendarDays,
@@ -9,15 +11,23 @@ import {
   FileUp,
   KeyRound,
   Loader2,
+  Megaphone,
   PackageSearch,
+  Percent,
   ReceiptText,
   RefreshCcw,
+  RotateCcw,
   Save,
+  Scale,
   Settings,
+  ShoppingBag,
   Trash2,
+  TrendingUp,
+  Truck,
+  Warehouse,
   WalletCards
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   OperatingExpenseInput,
   ProductCostInput,
@@ -25,7 +35,7 @@ import type {
   ReportSummary,
   TaxMode
 } from "../shared/types.js";
-import { api, readableApiError, type SyncInfo } from "./api.js";
+import { api, readableApiError, type MovementItem, type SyncInfo } from "./api.js";
 import { parseReportFile } from "./importReport.js";
 
 type Tab = "dashboard" | "products" | "costs" | "expenses" | "deductions" | "settings";
@@ -114,6 +124,11 @@ function promotionValue(amount: number | null, drr: number | null) {
   return amount === null ? "нет доступа" : `${money(amount)} · ДРР ${percent(drr)}`;
 }
 
+function performanceTone(value: number | null) {
+  if (value === null) return "neutral" as const;
+  return value >= 0 ? "positive" as const : "negative" as const;
+}
+
 function dateShort(value: string) {
   return new Intl.DateTimeFormat("ru-RU", {
     day: "2-digit",
@@ -200,16 +215,74 @@ function sortProducts(products: ProductReportItem[], sort: ProductSort) {
 function Metric({
   label,
   value,
-  tone = "neutral"
+  tone = "neutral",
+  icon: Icon
 }: {
   label: string;
   value: string;
-  tone?: "neutral" | "positive" | "warning" | "negative";
+  tone?: "neutral" | "income" | "cost" | "positive" | "warning" | "negative";
+  icon?: typeof BarChart3;
 }) {
   return (
     <div className={`metric metric-${tone}`}>
-      <span>{label}</span>
+      <div className="metric-label">
+        {Icon && <Icon size={16} strokeWidth={1.8} />}
+        <span>{label}</span>
+      </div>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function MetricSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="metric-section">
+      <h2>{title}</h2>
+      <div className="metric-grid">{children}</div>
+    </section>
+  );
+}
+
+function MovementMatrix({ items, mode }: { items: MovementItem[]; mode: "days" | "sizes" }) {
+  const columns = [...items].sort((left, right) => {
+    if (mode === "days") return right.label.localeCompare(left.label);
+    return left.label.localeCompare(right.label, "ru", { numeric: true });
+  });
+  const rows: Array<{ label: string; value: (item: MovementItem) => string }> = [
+    { label: "Продажи", value: (item) => money(item.revenue) },
+    { label: "Продажи, шт.", value: (item) => String(item.unitsSold) },
+    { label: "Возвраты, шт.", value: (item) => String(item.returns) },
+    { label: "Выкуп", value: (item) => percent(item.buyoutRate) },
+    { label: "К перечислению", value: (item) => money(item.forPay) },
+    { label: "Комиссия WB", value: (item) => money(item.commission) },
+    { label: "Логистика", value: (item) => money(item.logistics) },
+    { label: "Хранение", value: (item) => money(item.storage) },
+    { label: "Прочие удержания", value: (item) => money(item.otherDeductions) },
+    { label: "Штрафы", value: (item) => money(item.penalties) }
+  ];
+
+  return (
+    <div className="movement-scroll">
+      <table className="movement-matrix">
+        <thead>
+          <tr>
+            <th>Показатель</th>
+            {columns.map((item) => (
+              <th key={item.label}>
+                {mode === "days" && item.label !== "Без даты" ? dateShort(item.label) : item.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label}>
+              <th>{row.label}</th>
+              {columns.map((item) => <td key={`${row.label}-${item.label}`}>{row.value(item)}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -791,41 +864,60 @@ function Dashboard({ summary }: { summary: ReportSummary }) {
         </strong>
       </div>
 
-      <div className="metric-grid">
-        <Metric label="Продажи" value={`${money(summary.revenue)} · ${summary.unitsSold} шт.`} />
-        <Metric label="Выкуп" value={`${percent(summary.buyoutRate)} · возвраты ${summary.returns} шт.`} />
-        <Metric label="К перечислению за товар" value={money(summary.goodsForPay)} />
+      <MetricSection title="Продажи и выплаты">
+        <Metric
+          label="Продажи"
+          value={`${money(summary.revenue)} · ${summary.unitsSold} шт.`}
+          tone="income"
+          icon={ShoppingBag}
+        />
+        <Metric
+          label="Выкуп"
+          value={`${percent(summary.buyoutRate)} · возвраты ${summary.returns} шт.`}
+          icon={RotateCcw}
+        />
+        <Metric label="К перечислению за товар" value={money(summary.goodsForPay)} tone="income" icon={Banknote} />
+        <Metric label="Итого к оплате" value={money(summary.forPay)} tone="income" icon={CircleDollarSign} />
+      </MetricSection>
+
+      <MetricSection title="Расходы">
         <Metric
           label="Комиссия / вознаграждение WB"
           value={moneyAndPercent(summary.wbCommission, summary.commissionRate)}
-          tone="warning"
+          tone="cost"
+          icon={BadgePercent}
         />
         <Metric
           label="Все удержания WB"
           value={moneyAndPercent(summary.wbCommission + summary.wbExpenses, summary.wbDeductionsRate)}
-          tone="warning"
+          tone="cost"
+          icon={Scale}
         />
         <Metric
           label="Логистика"
           value={`${money(summary.logistics)} · ${summary.logisticsPerUnit === null ? "нет данных" : `${money(summary.logisticsPerUnit)}/шт.`}`}
-          tone="warning"
+          tone="cost"
+          icon={Truck}
         />
-        <Metric label="Хранение" value={money(summary.storage)} tone="warning" />
-        <Metric label="Прочие удержания" value={money(summary.otherDeductions)} tone="warning" />
-        <Metric label="Штрафы" value={money(summary.penalties)} tone="warning" />
-        <Metric label="Продвижение" value={promotionValue(summary.adSpend, summary.drr)} tone="warning" />
-        <Metric label="Итого к оплате" value={money(summary.forPay)} />
-        <Metric label="Себестоимость продаж" value={money(summary.productCost)} />
-        <Metric label="Опер. расходы" value={money(summary.operatingExpenses)} tone="warning" />
-        <Metric label={taxMetricLabel(summary.taxMode)} value={money(summary.tax)} tone="warning" />
+        <Metric label="Хранение" value={money(summary.storage)} tone="cost" icon={Warehouse} />
+        <Metric label="Прочие удержания" value={money(summary.otherDeductions)} tone="cost" icon={ReceiptText} />
+        <Metric label="Штрафы" value={money(summary.penalties)} tone="cost" icon={CircleDollarSign} />
+        <Metric label="Продвижение" value={promotionValue(summary.adSpend, summary.drr)} tone="cost" icon={Megaphone} />
+        <Metric label="Себестоимость продаж" value={money(summary.productCost)} tone="cost" icon={Boxes} />
+        <Metric label="Опер. расходы" value={money(summary.operatingExpenses)} tone="cost" icon={WalletCards} />
+        <Metric label={taxMetricLabel(summary.taxMode)} value={money(summary.tax)} tone="cost" icon={Banknote} />
+      </MetricSection>
+
+      <MetricSection title="Результат">
         <Metric
           label="Чистая прибыль"
           value={money(summary.finalProfit)}
           tone={summary.finalProfit >= 0 ? "positive" : "negative"}
+          icon={TrendingUp}
         />
-        <Metric label="Маржинальность" value={percent(summary.margin)} />
-        <Metric label="ROI" value={percent(summary.roi)} />
-      </div>
+        <Metric label="Маржинальность" value={percent(summary.margin)} tone={performanceTone(summary.margin)} icon={Percent} />
+        <Metric label="ROI" value={percent(summary.roi)} tone={performanceTone(summary.roi)} icon={BadgePercent} />
+      </MetricSection>
 
       {summary.promotionWarning && <div className="message message-info">{summary.promotionWarning}</div>}
 
@@ -914,10 +1006,10 @@ function Products({
               <div className="article-metrics">
                 <span><b>Продажи</b>{money(product.revenue)} · {product.unitsSold} шт.</span>
                 <span><b>Выкуп</b>{percent(product.buyoutRate)}</span>
-                <span><b>Удержания WB</b>{moneyAndPercent(product.wbCommission + product.wbExpenses, product.wbDeductionsRate)}</span>
-                <span><b>Комиссия WB</b>{moneyAndPercent(product.wbCommission, product.commissionRate)}</span>
+                <span><b>Удержания WB</b>{percent(product.wbDeductionsRate)}</span>
+                <span><b>Комиссия WB</b>{percent(product.commissionRate)}</span>
                 <span><b>Логистика / шт.</b>{product.logisticsPerUnit === null ? "нет данных" : money(product.logisticsPerUnit)}</span>
-                <span><b>Продвижение</b>{promotionValue(product.adSpend, product.drr)}</span>
+                <span><b>Продвижение / ДРР</b>{product.adSpend === null ? "нет доступа" : `${money(product.adSpend)} · ${percent(product.drr)}`}</span>
               </div>
             </div>
             <div className="product-profit">
@@ -1255,7 +1347,6 @@ function ProductDetail({
   onClose: () => void;
 }) {
   const [movementMode, setMovementMode] = useState<"days" | "sizes">("days");
-  const [expandedSize, setExpandedSize] = useState<string | null>(null);
 
   const movementRows = movementMode === "days" ? detail?.byDay ?? [] : detail?.bySize ?? [];
 
@@ -1288,41 +1379,52 @@ function ProductDetail({
           </div>
         </div>
 
-        <div className="metric-grid">
-          <Metric label="Продажи" value={money(product.revenue)} />
-          <Metric label="Продано / возвраты" value={`${product.unitsSold} / ${product.returns} шт.`} />
-          <Metric label="Выкуп" value={percent(product.buyoutRate)} />
-          <Metric label="К перечислению за товар" value={money(product.goodsForPay)} />
+        <MetricSection title="Продажи и выплаты">
+          <Metric label="Продажи" value={`${money(product.revenue)} · ${product.unitsSold} шт.`} tone="income" icon={ShoppingBag} />
+          <Metric label="Продано / возвраты" value={`${product.unitsSold} / ${product.returns} шт.`} icon={RotateCcw} />
+          <Metric label="Выкуп" value={percent(product.buyoutRate)} icon={Percent} />
+          <Metric label="К перечислению за товар" value={money(product.goodsForPay)} tone="income" icon={Banknote} />
+          <Metric label="Итого к оплате" value={money(product.forPay)} tone="income" icon={CircleDollarSign} />
+        </MetricSection>
+
+        <MetricSection title="Расходы">
           <Metric
             label="Комиссия / вознаграждение WB"
             value={moneyAndPercent(product.wbCommission, product.commissionRate)}
-            tone="warning"
+            tone="cost"
+            icon={BadgePercent}
           />
           <Metric
             label="Все удержания WB"
             value={moneyAndPercent(product.wbCommission + product.wbExpenses, product.wbDeductionsRate)}
-            tone="warning"
+            tone="cost"
+            icon={Scale}
           />
-          <Metric label="Итого к оплате" value={money(product.forPay)} />
-          <Metric label="Себестоимость" value={money(product.productCost)} />
           <Metric
             label="Логистика"
             value={`${money(product.logistics)} · ${product.logisticsPerUnit === null ? "нет данных" : `${money(product.logisticsPerUnit)}/шт.`}`}
-            tone="warning"
+            tone="cost"
+            icon={Truck}
           />
-          <Metric label="Хранение" value={money(product.storage)} tone="warning" />
-          <Metric label="Прочие удержания" value={money(product.otherDeductions)} tone="warning" />
-          <Metric label="Штрафы" value={money(product.penalties)} tone="warning" />
-          <Metric label="Продвижение" value={promotionValue(product.adSpend, product.drr)} tone="warning" />
-          <Metric label={taxMetricLabel(taxMode)} value={money(product.tax)} tone="warning" />
-          <Metric label="ROI" value={percent(product.roi)} />
-          <Metric label="Опер. расходы" value={money(product.operatingExpenses)} tone="warning" />
+          <Metric label="Хранение" value={money(product.storage)} tone="cost" icon={Warehouse} />
+          <Metric label="Прочие удержания" value={money(product.otherDeductions)} tone="cost" icon={ReceiptText} />
+          <Metric label="Штрафы" value={money(product.penalties)} tone="cost" icon={CircleDollarSign} />
+          <Metric label="Продвижение" value={promotionValue(product.adSpend, product.drr)} tone="cost" icon={Megaphone} />
+          <Metric label="Себестоимость" value={money(product.productCost)} tone="cost" icon={Boxes} />
+          <Metric label="Опер. расходы" value={money(product.operatingExpenses)} tone="cost" icon={WalletCards} />
+          <Metric label={taxMetricLabel(taxMode)} value={money(product.tax)} tone="cost" icon={Banknote} />
+        </MetricSection>
+
+        <MetricSection title="Результат">
           <Metric
             label="Прибыль"
             value={money(product.finalProfit)}
             tone={product.finalProfit >= 0 ? "positive" : "negative"}
+            icon={TrendingUp}
           />
-        </div>
+          <Metric label="Маржинальность" value={percent(product.margin)} tone={performanceTone(product.margin)} icon={Percent} />
+          <Metric label="ROI" value={percent(product.roi)} tone={performanceTone(product.roi)} icon={BadgePercent} />
+        </MetricSection>
 
         {!detail ? (
           <div className="busy-line">
@@ -1336,63 +1438,7 @@ function ProductDetail({
                 <button className={movementMode === "days" ? "active" : ""} onClick={() => setMovementMode("days")}>По дням</button>
                 <button className={movementMode === "sizes" ? "active" : ""} onClick={() => setMovementMode("sizes")}>По размерам</button>
               </div>
-              <div className="movement-table">
-                <div className="movement-head">
-                  <span>{movementMode === "days" ? "Дата" : "Размер"}</span>
-                  <span>Продажи</span>
-                  <span>Шт.</span>
-                  <span>Возв.</span>
-                  <span>Выкуп</span>
-                  <span>К оплате</span>
-                  <span>Комиссия</span>
-                  <span>Логистика</span>
-                  <span>Хранение</span>
-                  <span>Прочее</span>
-                  <span>Штрафы</span>
-                </div>
-                {movementRows.map((item) => (
-                  <div key={item.label}>
-                    <button
-                      type="button"
-                      className="movement-row"
-                      onClick={() => {
-                        if (movementMode === "sizes") setExpandedSize(expandedSize === item.label ? null : item.label);
-                      }}
-                    >
-                      <strong>{item.label === "Без даты" ? item.label : movementMode === "days" ? dateShort(item.label) : item.label}</strong>
-                      <span>{money(item.revenue)}</span>
-                      <span>{item.unitsSold}</span>
-                      <span>{item.returns}</span>
-                      <span>{percent(item.buyoutRate)}</span>
-                      <span>{money(item.forPay)}</span>
-                      <span>{money(item.commission)}</span>
-                      <span>{money(item.logistics)}</span>
-                      <span>{money(item.storage)}</span>
-                      <span>{money(item.otherDeductions)}</span>
-                      <span>{money(item.penalties)}</span>
-                    </button>
-                    {movementMode === "sizes" && expandedSize === item.label && (
-                      <div className="size-days">
-                        {(detail.bySize.find((size) => size.label === item.label)?.days ?? []).map((day) => (
-                          <div className="movement-row movement-subrow" key={`${item.label}-${day.label}`}>
-                            <span>{day.label === "Без даты" ? day.label : dateShort(day.label)}</span>
-                            <span>{money(day.revenue)}</span>
-                            <span>{day.unitsSold}</span>
-                            <span>{day.returns}</span>
-                            <span>{percent(day.buyoutRate)}</span>
-                            <span>{money(day.forPay)}</span>
-                            <span>{money(day.commission)}</span>
-                            <span>{money(day.logistics)}</span>
-                            <span>{money(day.storage)}</span>
-                            <span>{money(day.otherDeductions)}</span>
-                            <span>{money(day.penalties)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+              <MovementMatrix items={movementRows} mode={movementMode} />
             </section>
             <details>
               <summary>Удержания WB</summary>
@@ -1400,51 +1446,28 @@ function ProductDetail({
                 <div>
                   <span>Комиссия</span>
                   <span />
-                  <span>{money(detail.lines.reduce((sum, line) => sum + line.commission, 0))}</span>
+                  <span>{money(product.wbCommission)}</span>
                 </div>
                 <div>
                   <span>Логистика</span>
                   <span />
-                  <span>{money(detail.lines.reduce((sum, line) => sum + line.deliveryService, 0))}</span>
+                  <span>{money(product.logistics)}</span>
                 </div>
                 <div>
                   <span>Хранение</span>
                   <span />
-                  <span>{money(detail.lines.reduce((sum, line) => sum + line.storageFee, 0))}</span>
+                  <span>{money(product.storage)}</span>
                 </div>
                 <div>
                   <span>Прочие удержания</span>
                   <span />
-                  <span>
-                    {money(detail.lines.reduce((sum, line) => sum + line.acceptanceFee + line.deduction - line.additionalPayment, 0))}
-                  </span>
+                  <span>{money(product.otherDeductions)}</span>
                 </div>
                 <div>
                   <span>Штрафы</span>
                   <span />
-                  <span>{money(detail.lines.reduce((sum, line) => sum + line.penalty, 0))}</span>
+                  <span>{money(product.penalties)}</span>
                 </div>
-              </div>
-            </details>
-            <details>
-              <summary>Операции</summary>
-              <div className="operations-table">
-                <div className="operations-head">
-                  <span>Дата</span>
-                  <span>Тип</span>
-                  <span>Размер</span>
-                  <span>Кол-во</span>
-                  <span>К перечислению</span>
-                </div>
-                {detail.lines.map((line) => (
-                  <div className="operations-row" key={line.id}>
-                    <span>{line.operationDate ? dateShort(line.operationDate) : "-"}</span>
-                    <span>{line.operationType || "-"}</span>
-                    <span>{line.size || "-"}</span>
-                    <span>{line.quantity}</span>
-                    <span>{money(line.forPay)}</span>
-                  </div>
-                ))}
               </div>
             </details>
           </>

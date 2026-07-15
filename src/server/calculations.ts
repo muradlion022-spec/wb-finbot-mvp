@@ -750,26 +750,6 @@ export async function getCombinedReportProductDetail(reportIds: string[], nmId: 
     bySize: [...bySize.values()].map((item) => ({
       ...serializeMovement(item),
       days: [...(bySizeDay.get(item.label)?.values() ?? [])].map(serializeMovement)
-    })),
-    lines: lines.map((line) => {
-      const amounts = financialsOfLine(line);
-      return {
-        id: line.id,
-        operationDate: line.operationDate?.toISOString() ?? null,
-        operationType: line.operationType,
-        barcode: line.barcode,
-        size: line.size,
-        quantity: correctedSaleQuantity(line),
-        retailAmount: amounts.revenue,
-        forPay: amounts.payout,
-        commission: signedTransactionAmount(line.commission, line.operationType),
-        deliveryService: line.deliveryService,
-        storageFee: line.storageFee,
-        acceptanceFee: line.acceptanceFee,
-        penalty: line.penalty,
-        deduction: line.deduction,
-        additionalPayment: line.additionalPayment
-      };
-    })
+    }))
   };
 }

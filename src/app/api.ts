@@ -22,23 +22,6 @@ export type ProductDetailResponse = {
   product: import("../shared/types.js").ProductReportItem;
   byDay: MovementItem[];
   bySize: Array<MovementItem & { days: MovementItem[] }>;
-  lines: Array<{
-    id: string;
-    operationDate: string | null;
-    operationType: string | null;
-    barcode: string | null;
-    size: string | null;
-    quantity: number;
-    retailAmount: number;
-    forPay: number;
-    commission: number;
-    deliveryService: number;
-    storageFee: number;
-    acceptanceFee: number;
-    penalty: number;
-    deduction: number;
-    additionalPayment: number;
-  }>;
 };
 
 export type MovementItem = {

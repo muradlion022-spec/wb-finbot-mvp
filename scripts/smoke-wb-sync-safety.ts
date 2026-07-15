@@ -379,7 +379,7 @@ try {
   };
   assert.equal(combinedProductResponse.status, 200);
   assert.equal(combinedProductBody.product?.productCost, 500);
-  assert.equal(combinedProductBody.lines?.length, 2);
+  assert.equal("lines" in combinedProductBody, false);
   assert.equal(combinedProductBody.byDay?.length, 2);
   assert.equal(combinedProductBody.bySize?.[0]?.days?.length, 2);
   console.log("historical costs and combined reports: dated prices applied and operating expense counted once");
