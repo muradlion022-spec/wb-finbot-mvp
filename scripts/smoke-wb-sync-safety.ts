@@ -31,6 +31,8 @@ let detailedMode: "small" | "large" | "by_id_unavailable" = "small";
 let financeListCalls = 0;
 let financeDetailedCalls = 0;
 let contentCardCalls = 0;
+let promotionAccess = false;
+let promotionCountCalls = 0;
 
 const finance = await listen((req, res) => {
   const send = (status: number, body?: unknown) => {
@@ -38,7 +40,6 @@ const finance = await listen((req, res) => {
     res.end(body === undefined ? "" : JSON.stringify(body));
   };
   if (req.url === "/ping") return send(200, { ok: true });
-  if (req.url === "/adv/v1/promotion/count") return send(403, { message: "promotion rights missing" });
   if (req.url === "/api/finance/v1/sales-reports/list") {
     financeListCalls += 1;
     if (listStatus !== 200) return send(listStatus, { message: "rate limited" });
@@ -105,9 +106,34 @@ const content = await listen((req, res) => {
   res.writeHead(404).end();
 });
 
+const promotion = await listen((req, res) => {
+  const send = (status: number, body?: unknown) => {
+    res.writeHead(status, { "Content-Type": "application/json" });
+    res.end(body === undefined ? "" : JSON.stringify(body));
+  };
+  if (req.url === "/ping") {
+    return promotionAccess
+      ? send(200, { ok: true })
+      : send(403, { message: "promotion rights missing" });
+  }
+  if (req.url === "/adv/v1/promotion/count") {
+    promotionCountCalls += 1;
+    return promotionAccess
+      ? send(200, { adverts: [{ status: 9, advert_list: [{ advertId: 101 }] }] })
+      : send(403, { message: "promotion rights missing" });
+  }
+  if (req.url?.startsWith("/adv/v3/fullstats")) {
+    const date = new URL(req.url, "http://promotion.local").searchParams.get("beginDate") ?? "2026-07-03";
+    return promotionAccess
+      ? send(200, [{ days: [{ date, apps: [{ nms: [{ nmId: 100200300, sum: 12.34 }] }] }] }])
+      : send(403, { message: "promotion rights missing" });
+  }
+  send(404, { message: "not found" });
+});
+
 process.env.WB_FINANCE_API_BASE_URL = finance.baseUrl;
 process.env.WB_CONTENT_API_BASE_URL = content.baseUrl;
-process.env.WB_PROMOTION_API_BASE_URL = finance.baseUrl;
+process.env.WB_PROMOTION_API_BASE_URL = promotion.baseUrl;
 execFileSync(process.execPath, [prismaCli, "generate", "--schema", "prisma/schema.sqlite.prisma"], { cwd: root, env: process.env, stdio: "inherit" });
 execFileSync(process.execPath, [prismaCli, "db", "push", "--schema", "prisma/schema.sqlite.prisma", "--skip-generate"], { cwd: root, env: process.env, stdio: "inherit" });
 
@@ -150,8 +176,11 @@ try {
   const saved = await saveAndValidateWbToken(account.id, "finance-only-token-1234567890");
   assert.equal(saved.ok, true);
   assert.equal(saved.tokenStatus, "valid");
-  assert.equal(saved.warning, "Финансы подключены, но нет доступа к карточкам товаров. Названия и изображения могут не загрузиться.");
-  console.log("finance-only token: saved with Content warning");
+  assert.equal(saved.contentStatus, "unavailable");
+  assert.equal(saved.promotionStatus, "unavailable");
+  assert.match(saved.warning ?? "", /нет доступа к карточкам товаров/);
+  assert.match(saved.warning ?? "", /Нет доступа к категории Продвижение/);
+  console.log("finance-only token: saved with optional Content and Promotion warnings");
 
   const firstList = await listReports({ accountId: account.id, syncWb: true });
   assert.equal(firstList.reports.length, 1);
@@ -163,6 +192,22 @@ try {
   console.log("report list cooldown: second open used database cache without WB request");
 
   const loaded = await ensureReportLoaded(firstList.reports[0].id, { accountId: account.id });
+  await prisma.promotionSpendDaily.create({
+    data: {
+      wbAccountId: account.id,
+      date: new Date("2026-07-03T00:00:00.000Z"),
+      nmId: 100200300,
+      amount: 999
+    }
+  });
+  await prisma.wbSyncState.create({
+    data: {
+      wbAccountId: account.id,
+      endpointType: "promotion:2026-07-01:2026-07-07",
+      status: "failed",
+      lastErrorCode: "missing_promotion_rights"
+    }
+  });
   const summary = await calculateReportSummary(loaded.report.id, account.id);
   assert.equal(summary.forPay, 62);
   assert.equal(summary.storage, 5);
@@ -170,12 +215,39 @@ try {
   assert.equal(summary.penalties, 1);
   assert.equal(summary.promotionStatus, "missing_rights");
   assert.equal(summary.adSpend, null);
+  assert.equal(await prisma.promotionSpendDaily.count({ where: { wbAccountId: account.id } }), 0);
+  assert.equal(await prisma.wbSyncState.count({
+    where: { wbAccountId: account.id, endpointType: { startsWith: "promotion:" } }
+  }), 0);
   assert.equal(financeDetailedCalls, 1);
   const enrichment = await enrichReportProducts(loaded.report.id, account.id);
   assert.equal(enrichment.status, "failed_optional");
   assert.equal((await calculateReportSummary(loaded.report.id, account.id)).forPay, 62);
   assert.equal(contentCardCalls, 1);
   console.log("content failure: finance summary remains available with vendorCode and nmId");
+
+  promotionAccess = true;
+  const replacement = await saveAndValidateWbToken(account.id, "replacement-token-with-promotion-1234564321");
+  assert.equal(replacement.ok, true);
+  assert.equal(replacement.last4, "4321");
+  assert.equal(replacement.promotionStatus, "valid");
+  assert.equal(await prisma.wbSyncState.count({ where: { wbAccountId: account.id } }), 0);
+  assert.equal(await prisma.promotionSpendDaily.count({ where: { wbAccountId: account.id } }), 0);
+  const refreshedList = await listReports({ accountId: account.id, syncWb: true });
+  assert.equal(refreshedList.sync.cacheHit, false);
+  assert.equal(financeListCalls, 2);
+  const promotedSummary = await calculateReportSummary(loaded.report.id, account.id);
+  assert.equal(promotedSummary.promotionStatus, "ready");
+  assert.equal(promotedSummary.adSpend, 12.34);
+  assert.equal(promotedSummary.products[0]?.adSpend, 12.34);
+  assert.equal(promotionCountCalls, 2);
+  console.log("WB token replacement: old caches cleared and Promotion reloaded with the new token");
+  await prisma.$transaction([
+    prisma.promotionSpendDaily.deleteMany({ where: { wbAccountId: account.id } }),
+    prisma.wbSyncState.deleteMany({
+      where: { wbAccountId: account.id, endpointType: { startsWith: "promotion-v2:" } }
+    })
+  ]);
 
   const wbReferenceReport = await importReport(
     {
@@ -210,6 +282,13 @@ try {
   assert.equal(wbReferenceSummary.otherDeductions, 25220);
   assert.equal(wbReferenceSummary.penalties, 80);
 
+  await prisma.$transaction([
+    prisma.promotionSpendDaily.deleteMany({ where: { wbAccountId: account.id } }),
+    prisma.wbSyncState.deleteMany({
+      where: { wbAccountId: account.id, endpointType: { startsWith: "promotion-v2:" } }
+    })
+  ]);
+
   const referenceProduct = wbReferenceSummary.products[0];
   assert.ok(referenceProduct);
   await prisma.promotionSpendDaily.create({
@@ -224,12 +303,12 @@ try {
     where: {
       wbAccountId_endpointType: {
         wbAccountId: account.id,
-        endpointType: "promotion:2026-06-29:2026-07-05"
+        endpointType: "promotion-v2:2026-06-29:2026-07-05"
       }
     },
     create: {
       wbAccountId: account.id,
-      endpointType: "promotion:2026-06-29:2026-07-05",
+      endpointType: "promotion-v2:2026-06-29:2026-07-05",
       status: "ready",
       lastSuccessAt: new Date()
     },
@@ -454,4 +533,5 @@ try {
   await prisma.$disconnect();
   await new Promise<void>((resolve) => finance.server.close(() => resolve()));
   await new Promise<void>((resolve) => content.server.close(() => resolve()));
+  await new Promise<void>((resolve) => promotion.server.close(() => resolve()));
 }

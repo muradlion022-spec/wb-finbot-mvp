@@ -40,7 +40,7 @@ function taxLabel(mode: Awaited<ReturnType<typeof calculateReportSummary>>["taxM
 
 function mainKeyboard() {
   return new Keyboard()
-    .text("Подключить WB API")
+    .text("Подключить / заменить WB API")
     .text("Мои отчёты")
     .row()
     .text("Себестоимость")
@@ -332,6 +332,8 @@ export function createBot() {
         validation?.financeError ? `Finance ошибка: ${validation.financeError}` : null,
         validation ? `Content: ${validation.contentOk ? "доступ есть" : "нет доступа"} (${formatDebugStatus(validation.contentStatus)})` : null,
         validation?.contentError ? `Content ошибка: ${validation.contentError}` : null,
+        validation ? `Продвижение: ${validation.promotionOk ? "доступ есть" : "нет доступа"} (${formatDebugStatus(validation.promotionStatus)})` : null,
+        validation?.promotionError ? `Продвижение ошибка: ${validation.promotionError}` : null,
         validation?.warning ? `Предупреждение: ${validation.warning}` : null
       ].filter(Boolean).join("\n")
     );
@@ -353,7 +355,7 @@ export function createBot() {
   bot.hears("Мои отчёты", async (context) => {
     const account = await accountFromContext(context);
     if (!config.USE_DEMO_DATA && (!account.encryptedApiToken || account.tokenStatus !== "valid")) {
-      await context.reply("Сначала нажми “Подключить WB API” и вставь персональный WB-токен с категорией Финансы и уровнем Только чтение. Контент и Продвижение — опционально.");
+      await context.reply("Сначала нажми “Подключить / заменить WB API” и вставь персональный WB-токен с категорией Финансы и уровнем Только чтение. Контент и Продвижение — опционально.");
       return;
     }
 
@@ -380,7 +382,7 @@ export function createBot() {
     }
   });
 
-  bot.hears("Подключить WB API", async (context) => {
+  bot.hears(["Подключить WB API", "Подключить / заменить WB API"], async (context) => {
     await setPendingWbToken(context);
     await context.reply(
       [
@@ -394,7 +396,8 @@ export function createBot() {
         "4. Опционально: категория Контент, Только чтение — для названий, брендов и изображений товаров.",
         "5. Опционально: категория Продвижение, Только чтение — для рекламных расходов и ДРР.",
         "",
-        "Базовый токен и тестовый токен сейчас не используйте."
+        "Базовый токен и тестовый токен сейчас не используйте.",
+        "После успешной проверки новый токен сразу заменит предыдущий для бота и Mini App. Старый кэш прав и рекламы будет сброшен."
       ].join("\n")
     );
   });
@@ -428,6 +431,7 @@ export function createBot() {
     await context.reply(
       [
         `✅ WB API подключён. Токен сохранён, последние 4 символа: ${result.last4}`,
+        result.promotionStatus === "valid" ? "Продвижение: доступ есть. Рекламные расходы обновятся при открытии отчёта." : null,
         result.warning || null
       ]
         .filter(Boolean)

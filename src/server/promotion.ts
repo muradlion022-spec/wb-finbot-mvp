@@ -19,6 +19,7 @@ export type PromotionSpendSnapshot = {
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const LOCK_TTL_MS = 90 * 1000;
+const CACHE_VERSION = "v2";
 
 function dayStart(value: string) {
   return new Date(`${value}T00:00:00.000Z`);
@@ -29,7 +30,22 @@ function dayEnd(value: string) {
 }
 
 function endpointType(dateFrom: string, dateTo: string) {
-  return `promotion:${dateFrom}:${dateTo}`;
+  return `promotion-${CACHE_VERSION}:${dateFrom}:${dateTo}`;
+}
+
+async function clearLegacyPromotionCache(accountId: string) {
+  const legacyState = await prisma.wbSyncState.findFirst({
+    where: { wbAccountId: accountId, endpointType: { startsWith: "promotion:" } },
+    select: { id: true }
+  });
+  if (!legacyState) return;
+
+  await prisma.$transaction([
+    prisma.wbSyncState.deleteMany({
+      where: { wbAccountId: accountId, endpointType: { startsWith: "promotion:" } }
+    }),
+    prisma.promotionSpendDaily.deleteMany({ where: { wbAccountId: accountId } })
+  ]);
 }
 
 function statusForError(code: string | null): PromotionStatus {
@@ -70,9 +86,10 @@ export async function getPromotionSpendSnapshot(
   dateFrom: string,
   dateTo: string
 ): Promise<PromotionSpendSnapshot> {
+  await clearLegacyPromotionCache(accountId);
   const account = await prisma.wbAccount.findUnique({
     where: { id: accountId },
-    select: { encryptedApiToken: true }
+    select: { encryptedApiToken: true, tokenConnectedAt: true }
   });
   const cached = await cachedSnapshot(accountId, dateFrom, dateTo);
   if (!account?.encryptedApiToken) {
@@ -84,7 +101,8 @@ export async function getPromotionSpendSnapshot(
     where: { wbAccountId_endpointType: { wbAccountId: accountId, endpointType: key } }
   });
   const now = new Date();
-  if (state?.lastSuccessAt && now.getTime() - state.lastSuccessAt.getTime() < CACHE_TTL_MS) {
+  const stateIsForCurrentToken = !state || !account.tokenConnectedAt || state.updatedAt >= account.tokenConnectedAt;
+  if (stateIsForCurrentToken && state?.lastSuccessAt && now.getTime() - state.lastSuccessAt.getTime() < CACHE_TTL_MS) {
     const status = state.lastErrorCode === "partial" ? "partial" : "ready";
     return {
       status,
@@ -92,13 +110,13 @@ export async function getPromotionSpendSnapshot(
       ...cached
     };
   }
-  if (state?.lockedAt && now.getTime() - state.lockedAt.getTime() < LOCK_TTL_MS) {
+  if (stateIsForCurrentToken && state?.lockedAt && now.getTime() - state.lockedAt.getTime() < LOCK_TTL_MS) {
     return { status: "loading", warning: warningForStatus("loading"), ...cached };
   }
-  if (state?.cooldownUntil && state.cooldownUntil > now) {
+  if (stateIsForCurrentToken && state?.cooldownUntil && state.cooldownUntil > now) {
     return { status: "rate_limited", warning: warningForStatus("rate_limited"), ...cached };
   }
-  if (state?.status === "failed" && now.getTime() - state.updatedAt.getTime() < CACHE_TTL_MS) {
+  if (stateIsForCurrentToken && state?.status === "failed" && now.getTime() - state.updatedAt.getTime() < CACHE_TTL_MS) {
     const status = statusForError(state.lastErrorCode);
     return { status, warning: warningForStatus(status), ...cached };
   }

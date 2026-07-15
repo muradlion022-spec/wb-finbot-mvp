@@ -65,10 +65,13 @@ export type WbValidationResult = {
   ok: boolean;
   financeOk: boolean;
   contentOk: boolean;
+  promotionOk: boolean;
   financeStatus?: number;
   contentStatus?: number;
+  promotionStatus?: number;
   financeError?: string;
   contentError?: string;
+  promotionError?: string;
   warning?: string;
 };
 
@@ -102,6 +105,8 @@ type WbScope = "finance" | "content" | "promotion";
 
 const CONTENT_OPTIONAL_WARNING =
   "Финансы подключены, но нет доступа к карточкам товаров. Названия и изображения могут не загрузиться.";
+const PROMOTION_OPTIONAL_WARNING =
+  "Нет доступа к категории Продвижение. Рекламные расходы и ДРР пока недоступны.";
 const DETAILED_PAGE_LIMIT = 100_000;
 
 export function sanitizeWbToken(token: string) {
@@ -403,6 +408,7 @@ export class WbClient {
       ok: true,
       financeOk: true,
       contentOk: false,
+      promotionOk: false,
       financeStatus: 200
     };
 
@@ -418,14 +424,32 @@ export class WbClient {
       } else {
         result.contentError = "Неизвестная ошибка Content API.";
       }
-      result.warning = CONTENT_OPTIONAL_WARNING;
     }
+
+    try {
+      const promotionUrl = new URL("/ping", config.WB_PROMOTION_API_BASE_URL);
+      await this.requestJson<unknown>(promotionUrl, { scope: "promotion" });
+      result.promotionOk = true;
+      result.promotionStatus = 200;
+    } catch (error) {
+      if (error instanceof WbApiError) {
+        result.promotionStatus = error.status;
+        result.promotionError = error.message;
+      } else {
+        result.promotionError = "Неизвестная ошибка Promotion API.";
+      }
+    }
+
+    result.warning = [
+      result.contentOk ? null : CONTENT_OPTIONAL_WARNING,
+      result.promotionOk ? null : PROMOTION_OPTIONAL_WARNING
+    ].filter(Boolean).join(" ") || undefined;
 
     return result;
   }
 
   async debugToken(): Promise<WbValidationResult> {
-    const result: WbValidationResult = { ok: false, financeOk: false, contentOk: false };
+    const result: WbValidationResult = { ok: false, financeOk: false, contentOk: false, promotionOk: false };
     try {
       await this.requestJson<unknown>(new URL("/ping", config.WB_FINANCE_API_BASE_URL), { scope: "finance" });
       result.financeOk = true;
@@ -451,11 +475,29 @@ export class WbClient {
         } else {
           result.contentError = "Неизвестная ошибка Content API.";
         }
-        result.warning = CONTENT_OPTIONAL_WARNING;
+      }
+
+      try {
+        await this.requestJson<unknown>(new URL("/ping", config.WB_PROMOTION_API_BASE_URL), { scope: "promotion" });
+        result.promotionOk = true;
+        result.promotionStatus = 200;
+      } catch (error) {
+        if (error instanceof WbApiError) {
+          result.promotionStatus = error.status;
+          result.promotionError = error.message;
+        } else {
+          result.promotionError = "Неизвестная ошибка Promotion API.";
+        }
       }
     }
 
     result.ok = result.financeOk;
+    result.warning = result.financeOk
+      ? [
+          result.contentOk ? null : CONTENT_OPTIONAL_WARNING,
+          result.promotionOk ? null : PROMOTION_OPTIONAL_WARNING
+        ].filter(Boolean).join(" ") || undefined
+      : undefined;
     return result;
   }
 

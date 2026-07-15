@@ -100,7 +100,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   health: () => request<{ ok: boolean; version: string; builtAt: string }>("/api/health"),
   account: () =>
-    request<{ id: string; name: string; tokenStatus: string; taxMode: TaxMode; useDemoData: boolean; version: string }>("/api/account"),
+    request<{
+      id: string;
+      name: string;
+      tokenStatus: string;
+      tokenLast4: string | null;
+      tokenConnectedAt: string | null;
+      taxMode: TaxMode;
+      useDemoData: boolean;
+      version: string;
+    }>("/api/account"),
   saveTaxMode: (taxMode: TaxMode) =>
     request<{ taxMode: TaxMode }>("/api/account/tax", { method: "PATCH", body: JSON.stringify({ taxMode }) }),
   resetDemo: () => request<{ summary: ReportSummary }>("/api/demo/reset", { method: "POST" }),
@@ -160,7 +169,14 @@ export const api = {
     request<{ expense: unknown }>("/api/expenses", { method: "POST", body: JSON.stringify(payload) }),
   deleteExpense: (id: string) => request<{ ok: boolean }>(`/api/expenses/${id}`, { method: "DELETE" }),
   saveToken: (token: string) =>
-    request<{ tokenStatus: string; last4: string; warning?: string; contentStatus?: string }>("/api/wb/token", {
+    request<{
+      tokenStatus: string;
+      last4: string;
+      connectedAt: string;
+      warning?: string;
+      contentStatus?: string;
+      promotionStatus?: string;
+    }>("/api/wb/token", {
       method: "POST",
       body: JSON.stringify({ token })
     }),

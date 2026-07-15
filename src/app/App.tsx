@@ -305,9 +305,14 @@ export function App() {
   const reportPickerRef = useRef<HTMLDetailsElement | null>(null);
   const initialReportIds = reportIdsFromSearch(searchParams);
   const [tab, setTab] = useState<Tab>((searchParams.get("tab") as Tab) || "dashboard");
-  const [account, setAccount] = useState<{ name: string; tokenStatus: string; taxMode: TaxMode; useDemoData: boolean } | null>(
-    null
-  );
+  const [account, setAccount] = useState<{
+    name: string;
+    tokenStatus: string;
+    tokenLast4: string | null;
+    tokenConnectedAt: string | null;
+    taxMode: TaxMode;
+    useDemoData: boolean;
+  } | null>(null);
   const [reports, setReports] = useState<
     Array<{ id: string; reportId: string; dateFrom: string; dateTo: string; totalForPay: number }>
   >([]);
@@ -598,10 +603,46 @@ export function App() {
     setError("");
     try {
       const payload = await api.saveToken(tokenDraft);
-      setAccount((current) => (current ? { ...current, tokenStatus: payload.tokenStatus } : current));
+      setAccount((current) => current
+        ? {
+            ...current,
+            tokenStatus: payload.tokenStatus,
+            tokenLast4: payload.last4,
+            tokenConnectedAt: payload.connectedAt
+          }
+        : current);
       setTokenDraft("");
+
+      let refreshMessage: string | null = null;
+      try {
+        const reportsPayload = await api.reports();
+        setReports(reportsPayload.reports);
+        applySync(reportsPayload.sync);
+        const availableIds = new Set(reportsPayload.reports.map((report) => report.id));
+        const currentIds = selectedReportIds.filter((id) => availableIds.has(id));
+        const reportIds = currentIds.length > 0
+          ? currentIds
+          : reportsPayload.reports[0]?.id
+            ? [reportsPayload.reports[0].id]
+            : [];
+        setSelectedReportIds(reportIds);
+        setDraftReportIds(reportIds);
+        if (reportIds.length > 0) {
+          await refreshReports(reportIds);
+        } else {
+          setSummary(null);
+        }
+      } catch {
+        refreshMessage = "Токен заменён, но WB временно не отдал данные. Повторите открытие отчёта позже.";
+      }
+
       setNotice(
-        [`WB API подключён. Токен сохранён, последние 4 символа: ${payload.last4}.`, payload.warning || null]
+        [
+          `WB API подключён. Новый токен ****${payload.last4} применён в боте и Mini App.`,
+          payload.promotionStatus === "valid" ? "Продвижение: доступ есть." : null,
+          payload.warning || null,
+          refreshMessage
+        ]
           .filter(Boolean)
           .join(" ")
       );
@@ -616,7 +657,10 @@ export function App() {
     setBusy(true);
     try {
       await api.deleteToken();
-      setAccount((current) => (current ? { ...current, tokenStatus: "not_connected" } : current));
+      setAccount((current) => current
+        ? { ...current, tokenStatus: "not_connected", tokenLast4: null, tokenConnectedAt: null }
+        : current);
+      setSummary(null);
       setNotice("Токен удалён.");
     } catch (caught) {
       setError(readableApiError(caught));
@@ -828,6 +872,8 @@ export function App() {
           {tab === "settings" && (
             <SettingsView
               tokenStatus={account?.tokenStatus || "not_connected"}
+              tokenLast4={account?.tokenLast4 ?? null}
+              tokenConnectedAt={account?.tokenConnectedAt ?? null}
               taxMode={account?.taxMode || "none"}
               tokenDraft={tokenDraft}
               onTokenDraftChange={setTokenDraft}
@@ -1272,6 +1318,8 @@ function Deductions({ summary }: { summary: ReportSummary }) {
 
 function SettingsView({
   tokenStatus,
+  tokenLast4,
+  tokenConnectedAt,
   taxMode,
   tokenDraft,
   onTokenDraftChange,
@@ -1280,6 +1328,8 @@ function SettingsView({
   onTaxModeChange
 }: {
   tokenStatus: string;
+  tokenLast4: string | null;
+  tokenConnectedAt: string | null;
   taxMode: TaxMode;
   tokenDraft: string;
   onTokenDraftChange: (value: string) => void;
@@ -1295,9 +1345,15 @@ function SettingsView({
           <KeyRound size={18} />
           <span>{tokenStatusLabel(tokenStatus)}</span>
         </div>
+        {tokenLast4 && (
+          <p className="muted-text">
+            Текущий токен: ****{tokenLast4}
+            {tokenConnectedAt ? ` · подключён ${new Date(tokenConnectedAt).toLocaleString("ru-RU")}` : ""}
+          </p>
+        )}
         <p className="muted-text">Обязательно: Финансы · Только чтение. Для названий и фото добавьте Контент, для рекламных расходов и ДРР — Продвижение.</p>
         <label>
-          <span>Новый токен</span>
+          <span>{tokenStatus === "valid" ? "Заменить WB API-токен" : "Подключить WB API-токен"}</span>
           <input
             type="password"
             value={tokenDraft}
@@ -1308,7 +1364,7 @@ function SettingsView({
         <div className="settings-actions">
           <button className="primary-button" onClick={onSaveToken} disabled={tokenDraft.length < 16}>
             <Save size={17} />
-            <span>Сохранить</span>
+            <span>{tokenStatus === "valid" ? "Заменить" : "Подключить"}</span>
           </button>
           <button className="secondary-button danger" onClick={onDeleteToken}>
             <Trash2 size={17} />

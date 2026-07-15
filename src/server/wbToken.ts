@@ -26,14 +26,20 @@ export async function saveAndValidateWbToken(accountId: string, token: string) {
     const validation = await client.validateToken();
     const connectedAt = new Date();
 
-    await prisma.wbAccount.update({
-      where: { id: accountId },
-      data: {
-        tokenStatus: validation.ok ? "valid" : "invalid",
-        tokenLast4: last4,
-        tokenConnectedAt: validation.ok ? connectedAt : null
-      }
-    });
+    await prisma.$transaction([
+      prisma.wbAccount.update({
+        where: { id: accountId },
+        data: {
+          tokenStatus: validation.ok ? "valid" : "invalid",
+          tokenLast4: last4,
+          tokenConnectedAt: validation.ok ? connectedAt : null,
+          reportsSyncedAt: null,
+          reportsSyncError: null
+        }
+      }),
+      prisma.wbSyncState.deleteMany({ where: { wbAccountId: accountId } }),
+      prisma.promotionSpendDaily.deleteMany({ where: { wbAccountId: accountId } })
+    ]);
 
     return {
       ok: validation.ok,
@@ -41,18 +47,25 @@ export async function saveAndValidateWbToken(accountId: string, token: string) {
       last4,
       connectedAt,
       warning: validation.warning,
-      contentStatus: validation.contentOk ? "valid" : "unavailable"
+      contentStatus: validation.contentOk ? "valid" : "unavailable",
+      promotionStatus: validation.promotionOk ? "valid" : "unavailable"
     };
   } catch (error) {
-    await prisma.wbAccount.update({
-      where: { id: accountId },
-      data: {
-        encryptedApiToken: null,
-        tokenStatus: error instanceof WbApiError ? error.code : "invalid",
-        tokenLast4: null,
-        tokenConnectedAt: null
-      }
-    });
+    await prisma.$transaction([
+      prisma.wbAccount.update({
+        where: { id: accountId },
+        data: {
+          encryptedApiToken: null,
+          tokenStatus: error instanceof WbApiError ? error.code : "invalid",
+          tokenLast4: null,
+          tokenConnectedAt: null,
+          reportsSyncedAt: null,
+          reportsSyncError: null
+        }
+      }),
+      prisma.wbSyncState.deleteMany({ where: { wbAccountId: accountId } }),
+      prisma.promotionSpendDaily.deleteMany({ where: { wbAccountId: accountId } })
+    ]);
 
     return {
       ok: false,

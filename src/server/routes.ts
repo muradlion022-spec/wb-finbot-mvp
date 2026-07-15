@@ -216,6 +216,8 @@ app.get("/api/account", async (context) => {
     id: account.id,
     name: account.name,
     tokenStatus: account.tokenStatus,
+    tokenLast4: account.tokenLast4,
+    tokenConnectedAt: account.tokenConnectedAt,
     taxMode: normalizeTaxMode(account.taxMode),
     useDemoData: config.USE_DEMO_DATA,
     version: config.BUILD_VERSION
@@ -419,15 +421,33 @@ app.post("/api/wb/token", async (context) => {
     const status = result.errorCode === "invalid_token" ? 401 : result.errorCode === "missing_finance_rights" ? 403 : result.errorCode === "rate_limited" ? 429 : result.errorCode === "payment_required" ? 402 : 503;
     return responseError(context, status, result.error || "Не удалось проверить WB API-токен.", result.errorCode || "wb_token_error");
   }
-  return context.json({ tokenStatus: result.tokenStatus, last4: result.last4, warning: result.warning, contentStatus: result.contentStatus });
+  return context.json({
+    tokenStatus: result.tokenStatus,
+    last4: result.last4,
+    connectedAt: result.connectedAt,
+    warning: result.warning,
+    contentStatus: result.contentStatus,
+    promotionStatus: result.promotionStatus
+  });
 });
 
 app.delete("/api/wb/token", async (context) => {
   const account = await getCurrentAccount(context);
-  await prisma.wbAccount.update({
-    where: { id: account.id },
-    data: { encryptedApiToken: null, tokenStatus: "not_connected", tokenLast4: null, tokenConnectedAt: null }
-  });
+  await prisma.$transaction([
+    prisma.wbAccount.update({
+      where: { id: account.id },
+      data: {
+        encryptedApiToken: null,
+        tokenStatus: "not_connected",
+        tokenLast4: null,
+        tokenConnectedAt: null,
+        reportsSyncedAt: null,
+        reportsSyncError: null
+      }
+    }),
+    prisma.wbSyncState.deleteMany({ where: { wbAccountId: account.id } }),
+    prisma.promotionSpendDaily.deleteMany({ where: { wbAccountId: account.id } })
+  ]);
   return context.json({ ok: true });
 });
 
